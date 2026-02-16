@@ -1,0 +1,8 @@
+/pantalkd
+/pantalk-slack
+/pantalk-discord
+/pantalk-telegram
+/pantalk-mattermost
+/pantalkctl
+
+configs/pantalk.yaml
