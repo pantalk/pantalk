@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 func TestBotKey(t *testing.T) {

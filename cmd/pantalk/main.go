@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chatbotkit/pantalk/internal/client"
-	"github.com/chatbotkit/pantalk/internal/version"
+	"github.com/pantalk/pantalk/internal/client"
+	"github.com/pantalk/pantalk/internal/version"
 )
 
 func main() {

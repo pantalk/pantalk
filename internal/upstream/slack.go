@@ -14,8 +14,8 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 type SlackConnector struct {
@@ -25,10 +25,10 @@ type SlackConnector struct {
 	api         *slack.Client
 	socket      *socketmode.Client
 
-	mu           sync.RWMutex
-	channels     map[string]struct{}
-	selfUser     string
-	selfBotID    string
+	mu            sync.RWMutex
+	channels      map[string]struct{}
+	selfUser      string
+	selfBotID     string
 	receivedEvent bool
 }
 

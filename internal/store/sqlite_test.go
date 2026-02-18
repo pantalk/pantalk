@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 func openTestStore(t *testing.T) *Store {

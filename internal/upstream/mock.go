@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 type MockConnector struct {

@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/ctl"
-	"github.com/chatbotkit/pantalk/internal/protocol"
-	"github.com/chatbotkit/pantalk/internal/skill"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/ctl"
+	"github.com/pantalk/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/skill"
 )
 
 var defaultSocketPath = config.DefaultSocketPath()

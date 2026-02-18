@@ -14,8 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 type MattermostConnector struct {

@@ -29,8 +29,7 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
 │              (any language, any framework)       │
 └────────┬──────────┬──────────┬──────────┬────────┘
          │          │          │          │
-         ▼          ▼          ▼          ▼
-      slack     discord       mm         tg
+       send      history    notify     stream
          │          │          │          │
          └──────────┴──────┬───┴──────────┘
                            │

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 type Connector interface {
