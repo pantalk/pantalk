@@ -2,17 +2,18 @@
   <img src="https://pantalk.dev/icon.svg" alt="Pantalk" width="80" height="80" />
 </p>
 
-<h3 align="center">pantalkd - Technical Reference</h3>
+<h3 align="center">Pantalk - Technical Reference</h3>
 
 <p align="center">
-  Daemon, CLI clients, and protocol documentation for the Pantalk tool.
+  Give your AI agent a voice on every chat platform.<br/>
+  Daemon, CLI, and protocol documentation.
 </p>
 
 ---
 
 # Architecture
 
-Pantalk is a Unix-style client-server communication tool for chat services.
+Pantalk lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, and Telegram through a single interface.
 
 | Component  | Role                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------- |
@@ -23,8 +24,9 @@ All clients connect to `pantalkd` through a **Unix domain socket** using a simpl
 
 ### Design principles
 
+- **Agent-first** - structured output, skill definitions, and notification routing designed for AI agents
 - **One daemon, all platforms** - upstream auth/session complexity lives in `pantalkd`
-- **Unix-native IPC** - JSON over Unix socket, composable with `grep`, `jq`, `xargs`
+- **Composable CLI** - JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
 - **Multi-bot** - define multiple bots per service via config
 - **Local-first** - SQLite persistence, no external dependencies
 
