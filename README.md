@@ -24,26 +24,27 @@ AI agents need to communicate with humans where they already are - Slack, Discor
 Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity - auth, sessions, reconnects, rate limits - while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Your AI Agent                    │
-│              (any language, any framework)          │
-└───────────┬──────────┬──────────┬──────────┬────────┘
-            │          │          │          │
-          send      history    notify     stream
-            │          │          │          │
-            └──────────┴──────┬───┴──────────┘
-                              │
-                     Unix Domain Socket
-                       (JSON protocol)
-                              │
-                        ┌─────┴─────┐
-                        │  pantalkd  │
-                        │  (daemon)  │
-                        └─────┬─────┘
-                              │
-            ┌─────────┬───────┼────────┬──────────┐
-            ▼         ▼       ▼        ▼          ▼
-          Slack    Discord   MM    Telegram      ...
+┌──────────────────────────────────────────────────┐
+│                    Your AI Agent                 │
+│              (any language, any framework)       │
+└────────┬──────────┬──────────┬──────────┬────────┘
+         │          │          │          │
+         ▼          ▼          ▼          ▼
+      slack     discord       mm         tg
+         │          │          │          │
+         └──────────┴──────┬───┴──────────┘
+                           │
+                  Unix Domain Socket
+                   (JSON protocol)
+                           │
+                     ┌─────┴─────┐
+                     │  pantalkd │
+                     │  (daemon) │
+                     └─────┬─────┘
+                           │
+         ┌─────────┬───────┼────────┬──────────┐
+         ▼         ▼       ▼        ▼          ▼
+       Slack    Discord   MM    Telegram      ...
 ```
 
 ## Why Pantalk
