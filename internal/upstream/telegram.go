@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,19 +92,19 @@ type tgSendMessageResponse struct {
 	Result tgMessage `json:"result"`
 }
 
-func NewTelegramConnector(service config.ServiceConfig, bot config.BotConfig, publish func(protocol.Event)) (*TelegramConnector, error) {
+func NewTelegramConnector(bot config.BotConfig, publish func(protocol.Event)) (*TelegramConnector, error) {
 	token, err := config.ResolveCredential(bot.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolve telegram bot_token for bot %q: %w", bot.Name, err)
 	}
 
-	endpoint := strings.TrimSpace(service.Endpoint)
+	endpoint := strings.TrimSpace(bot.Endpoint)
 	if endpoint == "" {
 		endpoint = defaultTelegramEndpoint
 	}
 
 	connector := &TelegramConnector{
-		serviceName: service.Name,
+		serviceName: bot.Type,
 		botName:     bot.Name,
 		baseURL:     strings.TrimRight(endpoint, "/") + "/bot" + token,
 		token:       token,
@@ -124,17 +125,37 @@ func NewTelegramConnector(service config.ServiceConfig, bot config.BotConfig, pu
 }
 
 func (t *TelegramConnector) Run(ctx context.Context) {
-	if err := t.loadSelf(ctx); err != nil {
-		t.publishStatus("telegram auth failed: " + err.Error())
-		return
-	}
-
-	t.publishStatus("connector online")
+	backoff := time.Second
 
 	for {
 		select {
 		case <-ctx.Done():
 			t.publishStatus("connector offline")
+			return
+		default:
+		}
+
+		if err := t.loadSelf(ctx); err != nil {
+			log.Printf("[telegram:%s] auth failed: %v", t.botName, err)
+			t.publishStatus("telegram auth failed: " + err.Error())
+			t.sleepOrDone(ctx, backoff)
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+
+		backoff = time.Second
+		log.Printf("[telegram:%s] authenticated (bot_id=%d)", t.botName, t.selfBotID)
+		t.publishStatus("connector online")
+		t.pollLoop(ctx)
+	}
+}
+
+func (t *TelegramConnector) pollLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -174,12 +195,18 @@ func (t *TelegramConnector) Run(ctx context.Context) {
 				thread = strconv.FormatInt(message.ReplyToMessage.MessageID, 10)
 			}
 
+			userID := ""
+			if message.From != nil {
+				userID = strconv.FormatInt(message.From.ID, 10)
+			}
+
 			t.publish(protocol.Event{
 				Timestamp: time.Unix(message.Date, 0).UTC(),
 				Service:   t.serviceName,
 				Bot:       t.botName,
 				Kind:      "message",
 				Direction: "in",
+				User:      userID,
 				Target:    "chat:" + channelID,
 				Channel:   channelID,
 				Thread:    thread,
@@ -204,9 +231,7 @@ func (t *TelegramConnector) Send(ctx context.Context, request protocol.Request) 
 	payload := tgSendMessageRequest{ChatID: chatID, Text: text}
 	if request.Thread != "" {
 		if threadID, err := strconv.ParseInt(request.Thread, 10, 64); err == nil {
-			payload.MessageThreadID = threadID
-		} else if replyID, err := strconv.ParseInt(request.Thread, 10, 64); err == nil {
-			payload.ReplyToMessageID = replyID
+			payload.ReplyToMessageID = threadID
 		}
 	}
 
@@ -245,13 +270,19 @@ func (t *TelegramConnector) Send(ctx context.Context, request protocol.Request) 
 		thread = strconv.FormatInt(sendResponse.Result.MessageThreadID, 10)
 	}
 
+	target := request.Target
+	if target == "" {
+		target = "chat:" + channel
+	}
+
 	event := protocol.Event{
 		Timestamp: time.Unix(sendResponse.Result.Date, 0).UTC(),
 		Service:   t.serviceName,
 		Bot:       t.botName,
 		Kind:      "message",
 		Direction: "out",
-		Target:    request.Target,
+		User:      t.Identity(),
+		Target:    target,
 		Channel:   channel,
 		Thread:    thread,
 		Text:      text,
@@ -361,6 +392,15 @@ func (t *TelegramConnector) acceptsChannel(channel string) bool {
 
 	_, ok := t.channels[channel]
 	return ok
+}
+
+func (t *TelegramConnector) Identity() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.selfBotID > 0 {
+		return strconv.FormatInt(t.selfBotID, 10)
+	}
+	return ""
 }
 
 func (t *TelegramConnector) isSelfMessage(message *tgMessage) bool {

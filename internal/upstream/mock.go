@@ -64,10 +64,19 @@ func (m *MockConnector) Run(ctx context.Context) {
 	}
 }
 
+func (m *MockConnector) Identity() string {
+	return ""
+}
+
 func (m *MockConnector) Send(_ context.Context, request protocol.Request) (protocol.Event, error) {
 	trimmed := strings.TrimSpace(request.Text)
 	if trimmed == "" {
 		return protocol.Event{}, fmt.Errorf("text cannot be empty")
+	}
+
+	target := request.Target
+	if target == "" && request.Channel != "" {
+		target = "channel:" + request.Channel
 	}
 
 	outbound := protocol.Event{
@@ -76,7 +85,7 @@ func (m *MockConnector) Send(_ context.Context, request protocol.Request) (proto
 		Bot:       m.bot,
 		Kind:      "message",
 		Direction: "out",
-		Target:    request.Target,
+		Target:    target,
 		Channel:   request.Channel,
 		Thread:    request.Thread,
 		Text:      trimmed,
@@ -91,7 +100,7 @@ func (m *MockConnector) Send(_ context.Context, request protocol.Request) (proto
 			Bot:       m.bot,
 			Kind:      "message",
 			Direction: "in",
-			Target:    request.Target,
+			Target:    target,
 			Channel:   request.Channel,
 			Thread:    request.Thread,
 			Text:      "echo: " + trimmed,

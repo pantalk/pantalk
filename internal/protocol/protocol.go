@@ -3,30 +3,31 @@ package protocol
 import "time"
 
 const (
-	ActionPing        = "ping"
-	ActionBots        = "bots"
-	ActionSend        = "send"
-	ActionHistory     = "history"
-	ActionNotify      = "notifications"
-	ActionClearNotify = "clear_notifications"
-	ActionSubscribe   = "subscribe"
-	ActionReload      = "reload"
+	ActionPing         = "ping"
+	ActionBots         = "bots"
+	ActionSend         = "send"
+	ActionHistory      = "history"
+	ActionNotify       = "notifications"
+	ActionClearHistory = "clear_history"
+	ActionClearNotify  = "clear_notifications"
+	ActionSubscribe    = "subscribe"
+	ActionReload       = "reload"
 )
 
 type Request struct {
-	Action         string `json:"action"`
-	Service        string `json:"service,omitempty"`
-	Bot            string `json:"bot,omitempty"`
-	Target         string `json:"target,omitempty"`
-	Channel        string `json:"channel,omitempty"`
-	Thread         string `json:"thread,omitempty"`
-	Text           string `json:"text,omitempty"`
-	Notify         bool   `json:"notify,omitempty"`
-	Unseen         bool   `json:"unseen,omitempty"`
-	All            bool   `json:"all,omitempty"`
-	NotificationID int64  `json:"notification_id,omitempty"`
-	Limit          int    `json:"limit,omitempty"`
-	SinceID        int64  `json:"since_id,omitempty"`
+	Action  string `json:"action"`
+	Service string `json:"service,omitempty"`
+	Bot     string `json:"bot,omitempty"`
+	Target  string `json:"target,omitempty"`
+	Channel string `json:"channel,omitempty"`
+	Thread  string `json:"thread,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Search  string `json:"search,omitempty"`
+	Notify  bool   `json:"notify,omitempty"`
+	Unseen  bool   `json:"unseen,omitempty"`
+	All     bool   `json:"all,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	SinceID int64  `json:"since_id,omitempty"`
 }
 
 type Response struct {
@@ -53,6 +54,8 @@ type Event struct {
 	Bot            string     `json:"bot"`
 	Kind           string     `json:"kind"`
 	Direction      string     `json:"direction"`
+	User           string     `json:"user,omitempty"`
+	Self           bool       `json:"self,omitempty"`
 	Target         string     `json:"target,omitempty"`
 	Channel        string     `json:"channel,omitempty"`
 	Thread         string     `json:"thread,omitempty"`

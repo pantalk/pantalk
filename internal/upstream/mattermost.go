@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,16 +63,16 @@ type mmUser struct {
 	ID string `json:"id"`
 }
 
-func NewMattermostConnector(service config.ServiceConfig, bot config.BotConfig, publish func(protocol.Event)) (*MattermostConnector, error) {
+func NewMattermostConnector(bot config.BotConfig, publish func(protocol.Event)) (*MattermostConnector, error) {
 	token, err := config.ResolveCredential(bot.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolve mattermost bot_token for bot %q: %w", bot.Name, err)
 	}
 
 	connector := &MattermostConnector{
-		serviceName: service.Name,
+		serviceName: bot.Type,
 		botName:     bot.Name,
-		endpoint:    strings.TrimRight(strings.TrimSpace(service.Endpoint), "/"),
+		endpoint:    strings.TrimRight(strings.TrimSpace(bot.Endpoint), "/"),
 		token:       token,
 		publish:     publish,
 		httpClient:  &http.Client{Timeout: 20 * time.Second},
@@ -91,9 +92,12 @@ func NewMattermostConnector(service config.ServiceConfig, bot config.BotConfig, 
 
 func (m *MattermostConnector) Run(ctx context.Context) {
 	if err := m.loadSelfUser(ctx); err != nil {
+		log.Printf("[mattermost:%s] auth failed: %v", m.botName, err)
 		m.publishStatus("mattermost auth failed: " + err.Error())
 		return
 	}
+
+	log.Printf("[mattermost:%s] authenticated (user=%s)", m.botName, m.selfUser)
 
 	m.publishStatus("connector online")
 
@@ -158,13 +162,19 @@ func (m *MattermostConnector) Send(ctx context.Context, request protocol.Request
 		return protocol.Event{}, err
 	}
 
+	target := request.Target
+	if target == "" {
+		target = "channel:" + posted.ChannelID
+	}
+
 	event := protocol.Event{
 		Timestamp: time.UnixMilli(posted.CreateAt).UTC(),
 		Service:   m.serviceName,
 		Bot:       m.botName,
 		Kind:      "message",
 		Direction: "out",
-		Target:    request.Target,
+		User:      m.Identity(),
+		Target:    target,
 		Channel:   posted.ChannelID,
 		Thread:    posted.RootID,
 		Text:      posted.Message,
@@ -198,6 +208,7 @@ func (m *MattermostConnector) runWebsocketLoop(ctx context.Context) {
 		}
 
 		backoff = time.Second
+		log.Printf("[mattermost:%s] websocket connected", m.botName)
 		m.publishStatus("mattermost websocket connected")
 
 		if err := m.authenticateWebsocket(conn); err != nil {
@@ -291,6 +302,7 @@ func (m *MattermostConnector) readWebsocketLoop(ctx context.Context, conn *webso
 			Bot:       m.botName,
 			Kind:      "message",
 			Direction: "in",
+			User:      post.UserID,
 			Target:    "channel:" + post.ChannelID,
 			Channel:   post.ChannelID,
 			Thread:    post.RootID,
@@ -375,6 +387,12 @@ func (m *MattermostConnector) acceptsChannel(channel string) bool {
 
 	_, ok := m.channels[channel]
 	return ok
+}
+
+func (m *MattermostConnector) Identity() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.selfUser
 }
 
 func (m *MattermostConnector) isSelfUser(userID string) bool {

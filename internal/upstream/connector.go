@@ -11,22 +11,23 @@ import (
 type Connector interface {
 	Run(ctx context.Context)
 	Send(ctx context.Context, request protocol.Request) (protocol.Event, error)
+	Identity() string
 }
 
-func NewConnector(service config.ServiceConfig, bot config.BotConfig, publish func(protocol.Event)) (Connector, error) {
-	switch service.Name {
+func NewConnector(bot config.BotConfig, publish func(protocol.Event)) (Connector, error) {
+	switch bot.Type {
 	case "slack":
-		return NewSlackConnector(service, bot, publish)
+		return NewSlackConnector(bot, publish)
 	case "discord":
-		return NewDiscordConnector(service, bot, publish)
+		return NewDiscordConnector(bot, publish)
 	case "mattermost":
-		return NewMattermostConnector(service, bot, publish)
+		return NewMattermostConnector(bot, publish)
 	case "telegram":
-		return NewTelegramConnector(service, bot, publish)
+		return NewTelegramConnector(bot, publish)
 	default:
-		if service.Transport == "" {
-			return nil, fmt.Errorf("service %q requires either supported name or transport", service.Name)
+		if bot.Transport == "" {
+			return nil, fmt.Errorf("bot %q requires either supported type or transport", bot.Name)
 		}
-		return NewMockConnector(service.Name, bot.Name, publish), nil
+		return NewMockConnector(bot.Type, bot.Name, publish), nil
 	}
 }

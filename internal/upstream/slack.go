@@ -3,6 +3,7 @@ package upstream
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,13 +25,14 @@ type SlackConnector struct {
 	api         *slack.Client
 	socket      *socketmode.Client
 
-	mu        sync.RWMutex
-	channels  map[string]struct{}
-	selfUser  string
-	selfBotID string
+	mu           sync.RWMutex
+	channels     map[string]struct{}
+	selfUser     string
+	selfBotID    string
+	receivedEvent bool
 }
 
-func NewSlackConnector(service config.ServiceConfig, bot config.BotConfig, publish func(protocol.Event)) (*SlackConnector, error) {
+func NewSlackConnector(bot config.BotConfig, publish func(protocol.Event)) (*SlackConnector, error) {
 	token, err := config.ResolveCredential(bot.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolve slack bot_token for bot %q: %w", bot.Name, err)
@@ -44,7 +46,7 @@ func NewSlackConnector(service config.ServiceConfig, bot config.BotConfig, publi
 	apiClient := slack.New(token, slack.OptionAppLevelToken(appToken))
 
 	connector := &SlackConnector{
-		serviceName: service.Name,
+		serviceName: bot.Type,
 		botName:     bot.Name,
 		publish:     publish,
 		api:         apiClient,
@@ -64,10 +66,47 @@ func NewSlackConnector(service config.ServiceConfig, bot config.BotConfig, publi
 }
 
 func (s *SlackConnector) Run(ctx context.Context) {
+	backoff := time.Second
+
+	for {
+		select {
+		case <-ctx.Done():
+			s.publishStatus("connector offline")
+			return
+		default:
+		}
+
+		if err := s.connectAndRun(ctx); err != nil {
+			log.Printf("[slack:%s] session ended: %v", s.botName, err)
+			s.publishStatus("slack session ended: " + err.Error())
+		}
+
+		select {
+		case <-ctx.Done():
+			s.publishStatus("connector offline")
+			return
+		case <-time.After(backoff):
+		}
+
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+
+		s.publishStatus("slack reconnecting...")
+		log.Printf("[slack:%s] reconnecting", s.botName)
+
+		// Re-create the socket-mode client for a fresh connection
+		s.mu.Lock()
+		s.socket = socketmode.New(s.api)
+		s.mu.Unlock()
+	}
+}
+
+func (s *SlackConnector) connectAndRun(ctx context.Context) error {
 	auth, err := s.api.AuthTestContext(ctx)
 	if err != nil {
-		s.publishStatus("slack auth failed: " + err.Error())
-		return
+		log.Printf("[slack:%s] auth failed: %v", s.botName, err)
+		return fmt.Errorf("auth failed: %w", err)
 	}
 
 	s.mu.Lock()
@@ -75,7 +114,17 @@ func (s *SlackConnector) Run(ctx context.Context) {
 	s.selfBotID = auth.BotID
 	s.mu.Unlock()
 
+	log.Printf("[slack:%s] authenticated (user=%s)", s.botName, auth.UserID)
+
 	go s.socket.RunContext(ctx)
+
+	s.publishStatus("connector online")
+
+	// Start a timer to detect missing event subscriptions. If no events arrive
+	// within 30 seconds of connecting, it likely means the Slack app is missing
+	// event subscriptions (app_mention, message.channels, etc.).
+	eventCheckTimer := time.NewTimer(30 * time.Second)
+	defer eventCheckTimer.Stop()
 
 	heartbeatTicker := time.NewTicker(45 * time.Second)
 	defer heartbeatTicker.Stop()
@@ -83,14 +132,20 @@ func (s *SlackConnector) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.publishStatus("connector offline")
-			return
+			return ctx.Err()
+		case <-eventCheckTimer.C:
+			s.mu.RLock()
+			gotEvent := s.receivedEvent
+			s.mu.RUnlock()
+			if !gotEvent {
+				log.Printf("[slack:%s] warning: no events received after 30s - check that your Slack app has event subscriptions enabled (app_mention, message.channels) and the bot is invited to a channel", s.botName)
+				s.publishStatus("warning: no events received - check Slack app event subscriptions")
+			}
 		case <-heartbeatTicker.C:
 			s.publishHeartbeat()
 		case event, ok := <-s.socket.Events:
 			if !ok {
-				s.publishStatus("socket mode event channel closed")
-				return
+				return fmt.Errorf("socket mode event channel closed")
 			}
 			s.handleSocketEvent(event)
 		}
@@ -125,13 +180,19 @@ func (s *SlackConnector) Send(ctx context.Context, request protocol.Request) (pr
 		return protocol.Event{}, err
 	}
 
+	target := request.Target
+	if target == "" {
+		target = "channel:" + postedChannel
+	}
+
 	event := protocol.Event{
 		Timestamp: parseSlackTimestamp(postedTS),
 		Service:   s.serviceName,
 		Bot:       s.botName,
 		Kind:      "message",
 		Direction: "out",
-		Target:    request.Target,
+		User:      s.Identity(),
+		Target:    target,
 		Channel:   postedChannel,
 		Thread:    request.Thread,
 		Text:      trimmed,
@@ -153,6 +214,10 @@ func (s *SlackConnector) handleSocketEvent(event socketmode.Event) {
 			s.publishStatus("socket mode connection error")
 		}
 	case socketmode.EventTypeEventsAPI:
+		s.mu.Lock()
+		s.receivedEvent = true
+		s.mu.Unlock()
+
 		if event.Request != nil {
 			s.socket.Ack(*event.Request)
 		}
@@ -171,9 +236,11 @@ func (s *SlackConnector) handleSocketEvent(event socketmode.Event) {
 }
 
 func (s *SlackConnector) handleInnerEvent(inner slackevents.EventsAPIInnerEvent) {
-	switch message := inner.Data.(type) {
+	switch ev := inner.Data.(type) {
 	case *slackevents.MessageEvent:
-		s.handleMessageEvent(message)
+		s.handleMessageEvent(ev)
+	case *slackevents.AppMentionEvent:
+		s.handleAppMentionEvent(ev)
 	}
 }
 
@@ -204,10 +271,49 @@ func (s *SlackConnector) handleMessageEvent(message *slackevents.MessageEvent) {
 		Bot:       s.botName,
 		Kind:      "message",
 		Direction: "in",
+		User:      message.User,
 		Target:    "channel:" + message.Channel,
 		Channel:   message.Channel,
 		Thread:    message.ThreadTimeStamp,
 		Text:      message.Text,
+	}
+
+	s.publish(event)
+}
+
+func (s *SlackConnector) handleAppMentionEvent(mention *slackevents.AppMentionEvent) {
+	if mention == nil {
+		return
+	}
+
+	if mention.TimeStamp == "" {
+		return
+	}
+
+	if mention.BotID != "" {
+		s.mu.RLock()
+		isSelf := s.selfBotID != "" && mention.BotID == s.selfBotID
+		s.mu.RUnlock()
+		if isSelf {
+			return
+		}
+	}
+
+	if !s.acceptsChannel(mention.Channel) {
+		return
+	}
+
+	event := protocol.Event{
+		Timestamp: parseSlackTimestamp(mention.TimeStamp),
+		Service:   s.serviceName,
+		Bot:       s.botName,
+		Kind:      "message",
+		Direction: "in",
+		User:      mention.User,
+		Target:    "channel:" + mention.Channel,
+		Channel:   mention.Channel,
+		Thread:    mention.ThreadTimeStamp,
+		Text:      mention.Text,
 	}
 
 	s.publish(event)
@@ -279,6 +385,12 @@ func (s *SlackConnector) isSelfMessage(message *slackevents.MessageEvent) bool {
 	}
 
 	return false
+}
+
+func (s *SlackConnector) Identity() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.selfUser
 }
 
 func resolveSlackChannel(request protocol.Request) string {
