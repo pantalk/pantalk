@@ -6,8 +6,6 @@
 
 <p align="center">
   Daemon, CLI clients, and protocol documentation for the Pantalk tool.
-  <br/>
-  <a href="../README.md">← Back to overview</a>
 </p>
 
 ---
@@ -276,5 +274,5 @@ bot_token: xoxb-your-actual-token
 ---
 
 <p align="center">
-  <sub><a href="../README.md">← Back to Pantalk overview</a> · <a href="https://pantalk.dev">pantalk.dev</a></sub>
+  <a href="https://pantalk.dev">pantalk.dev</a></sub>
 </p>
