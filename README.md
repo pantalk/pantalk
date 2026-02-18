@@ -2,33 +2,88 @@
   <img src="https://pantalk.dev/icon.svg" alt="Pantalk" width="80" height="80" />
 </p>
 
-<h3 align="center">Pantalk - Technical Reference</h3>
+<h1 align="center">Pantalk</h1>
 
 <p align="center">
-  Give your AI agent a voice on every chat platform.<br/>
-  Daemon, CLI, and protocol documentation.
+  <strong>Give your AI agent a voice on every chat platform.</strong><br/>
+  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, and Telegram through a single interface.
+</p>
+
+<p align="center">
+  <a href="https://pantalk.dev">Website</a> · <a href="https://pantalk.dev/about">About</a> · <a href="#quick-start">Quick Start</a> · <a href="#platform-setup">Platform Setup</a>
 </p>
 
 ---
 
-# Architecture
+## The Problem
 
-Pantalk lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, and Telegram through a single interface.
+AI agents need to communicate with humans where they already are — Slack, Discord, Mattermost, Telegram. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+
+## The Solution
+
+Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity — auth, sessions, reconnects, rate limits — while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Your AI Agent                    │
+│              (any language, any framework)          │
+└───────────┬──────────┬──────────┬──────────┬────────┘
+            │          │          │          │
+          send      history    notify     stream
+            │          │          │          │
+            └──────────┴──────┬───┴──────────┘
+                              │
+                     Unix Domain Socket
+                       (JSON protocol)
+                              │
+                        ┌─────┴─────┐
+                        │  pantalkd  │
+                        │  (daemon)  │
+                        └─────┬─────┘
+                              │
+            ┌─────────┬───────┼────────┬──────────┐
+            ▼         ▼       ▼        ▼          ▼
+          Slack    Discord   MM    Telegram      ...
+```
+
+## Why Pantalk
+
+|                        | Without Pantalk            | With Pantalk                  |
+| ---------------------- | -------------------------- | ----------------------------- |
+| **Integration effort** | One SDK per platform       | One CLI, all platforms        |
+| **Auth & sessions**    | You manage everything      | Daemon handles it             |
+| **Message history**    | Query each API differently | `history --limit 20`          |
+| **Notifications**      | Build your own routing     | `notifications --unseen`      |
+| **Real-time events**   | WebSocket/Gateway/polling  | `stream --bot name`           |
+| **Composability**      | Library lock-in            | Pipe to `grep`, `jq`, `xargs` |
+
+## Supported Platforms
+
+| Platform       | Transport                       | Status          |
+| -------------- | ------------------------------- | --------------- |
+| **Slack**      | Socket Mode + Web API           | ✅ Full support |
+| **Discord**    | Gateway + REST API              | ✅ Full support |
+| **Mattermost** | WebSocket + REST API            | ✅ Full support |
+| **Telegram**   | Bot API long-poll + sendMessage | ✅ Full support |
+
+---
+
+## Architecture
 
 | Component  | Role                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------- |
-| `pantalkd` | Local daemon - maintains persistent upstream sessions (WebSocket, Gateway, long-poll) |
-| `pantalk`  | Unified CLI - messaging, admin, and config management                                 |
+| `pantalkd` | Local daemon — maintains persistent upstream sessions (WebSocket, Gateway, long-poll) |
+| `pantalk`  | Unified CLI — messaging, admin, and config management                                 |
 
 All clients connect to `pantalkd` through a **Unix domain socket** using a simple JSON protocol. AI agents and LLM tools can send, receive, and stream chat messages without embedding any service SDK.
 
-### Design principles
+### Design Principles
 
-- **Agent-first** - structured output, skill definitions, and notification routing designed for AI agents
-- **One daemon, all platforms** - upstream auth/session complexity lives in `pantalkd`
-- **Composable CLI** - JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
-- **Multi-bot** - define multiple bots per service via config
-- **Local-first** - SQLite persistence, no external dependencies
+- **Agent-first** — structured output, skill definitions, and notification routing designed for AI agents
+- **One daemon, all platforms** — upstream auth/session complexity lives in `pantalkd`
+- **Composable CLI** — JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
+- **Multi-bot** — define multiple bots per service via config
+- **Local-first** — SQLite persistence, no external dependencies
 
 ## Source Layout
 
