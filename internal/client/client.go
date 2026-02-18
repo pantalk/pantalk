@@ -10,11 +10,24 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/chatbotkit/pantalk/internal/config"
+	"github.com/chatbotkit/pantalk/internal/ctl"
 	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/chatbotkit/pantalk/internal/skill"
 )
 
-const defaultSocketPath = "/tmp/pantalk.sock"
+var defaultSocketPath = config.DefaultSocketPath()
+
+// isTTY returns true if stdout is connected to a terminal.
+func isTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
 
 func Run(service string, toolName string, args []string) int {
 	if len(args) == 0 {
@@ -34,12 +47,22 @@ func Run(service string, toolName string, args []string) int {
 		return runHistory(service, commandArgs, false)
 	case "notifications", "notify":
 		return runHistory(service, commandArgs, true)
-	case "clear-notifications", "clear-notify", "ack":
-		return runClearNotifications(service, commandArgs)
 	case "stream", "subscribe":
 		return runSubscribe(service, commandArgs)
 	case "ping":
 		return runPing(commandArgs)
+	case "skill":
+		if err := skill.Run(commandArgs); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "setup", "validate", "reload", "config":
+		if err := ctl.Run(args); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
 	case "help", "-h", "--help":
 		printUsage(toolName)
 		return 0
@@ -53,12 +76,15 @@ func Run(service string, toolName string, args []string) int {
 func runBots(service string, args []string) int {
 	flags := flag.NewFlagSet("bots", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	jsonOut := flags.Bool("json", false, "print JSON response")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 
-	resp, err := call(*socket, protocol.Request{Action: protocol.ActionBots, Service: service})
+	svc := resolveService(service, *svcFlag)
+
+	resp, err := call(*socket, protocol.Request{Action: protocol.ActionBots, Service: svc})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -75,7 +101,7 @@ func runBots(service string, args []string) int {
 	}
 
 	for _, bot := range resp.Bots {
-		fmt.Printf("%s\t%s\t%s\n", bot.Name, bot.BotID, bot.DisplayName)
+		fmt.Printf("%s\t%s\t%s\t%s\n", bot.Service, bot.Name, bot.BotID, bot.DisplayName)
 	}
 
 	return 0
@@ -84,14 +110,18 @@ func runBots(service string, args []string) int {
 func runSend(service string, args []string) int {
 	flags := flag.NewFlagSet("send", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "service name (auto-resolved from bot if omitted)")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "generic destination id (room/channel/user/thread root)")
 	channel := flags.String("channel", "", "channel destination id")
 	thread := flags.String("thread", "", "thread id")
 	text := flags.String("text", "", "message text")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+
+	svc := resolveService(service, *svcFlag)
 
 	if strings.TrimSpace(*bot) == "" {
 		fmt.Fprintln(os.Stderr, "--bot is required")
@@ -108,7 +138,7 @@ func runSend(service string, args []string) int {
 
 	resp, err := call(*socket, protocol.Request{
 		Action:  protocol.ActionSend,
-		Service: service,
+		Service: svc,
 		Bot:     *bot,
 		Target:  *target,
 		Channel: *channel,
@@ -126,7 +156,11 @@ func runSend(service string, args []string) int {
 	}
 
 	if resp.Event != nil {
-		printEvent(*resp.Event)
+		if *jsonOut {
+			_ = json.NewEncoder(os.Stdout).Encode(resp.Event)
+		} else {
+			printEvent(*resp.Event)
+		}
 	}
 
 	return 0
@@ -135,26 +169,37 @@ func runSend(service string, args []string) int {
 func runHistory(service string, args []string, forceNotify bool) int {
 	flags := flag.NewFlagSet("history", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
 	thread := flags.String("thread", "", "filter by thread id")
+	search := flags.String("search", "", "filter messages containing this text (case-insensitive)")
 	notify := flags.Bool("notify", forceNotify, "only return agent-relevant notification events")
 	unseen := flags.Bool("unseen", false, "only return unseen notifications (notifications command)")
 	limit := flags.Int("limit", 20, "number of events")
 	sinceID := flags.Int64("since", 0, "only return events with id > since")
-	jsonOut := flags.Bool("json", false, "print JSON response")
+	clear := flags.Bool("clear", false, "delete matching events from the database")
+	all := flags.Bool("all", false, "allow broad clear across all bots/channels")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 
+	svc := resolveService(service, *svcFlag)
+
+	if *clear {
+		return runClear(svc, *socket, *bot, *target, *channel, *thread, *search, *unseen, *all, forceNotify, *jsonOut)
+	}
+
 	resp, err := call(*socket, protocol.Request{
 		Action:  toAction(forceNotify),
-		Service: service,
+		Service: svc,
 		Bot:     *bot,
 		Target:  *target,
 		Channel: *channel,
 		Thread:  *thread,
+		Search:  *search,
 		Notify:  *notify,
 		Unseen:  *unseen,
 		Limit:   *limit,
@@ -185,15 +230,20 @@ func runHistory(service string, args []string, forceNotify bool) int {
 func runSubscribe(service string, args []string) int {
 	flags := flag.NewFlagSet("stream", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
 	thread := flags.String("thread", "", "filter by thread id")
+	search := flags.String("search", "", "filter messages containing this text (case-insensitive)")
 	notify := flags.Bool("notify", false, "only stream agent-relevant notification events")
-	jsonOut := flags.Bool("json", false, "print JSON response")
+	timeoutSec := flags.Int("timeout", 60, "disconnect after N seconds (0 = no timeout)")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+
+	svc := resolveService(service, *svcFlag)
 
 	conn, err := net.Dial("unix", *socket)
 	if err != nil {
@@ -202,13 +252,20 @@ func runSubscribe(service string, args []string) int {
 	}
 	defer conn.Close()
 
+	// Set a hard deadline on the connection so agent tools never block
+	// indefinitely. A timeout of 0 disables the deadline for interactive use.
+	if *timeoutSec > 0 {
+		_ = conn.SetDeadline(time.Now().Add(time.Duration(*timeoutSec) * time.Second))
+	}
+
 	request := protocol.Request{
 		Action:  protocol.ActionSubscribe,
-		Service: service,
+		Service: svc,
 		Bot:     *bot,
 		Target:  *target,
 		Channel: *channel,
 		Thread:  *thread,
+		Search:  *search,
 		Notify:  *notify,
 	}
 
@@ -231,9 +288,14 @@ func runSubscribe(service string, args []string) int {
 	for {
 		var resp protocol.Response
 		if err := decoder.Decode(&resp); err != nil {
-			if !errors.Is(err, net.ErrClosed) {
-				fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, net.ErrClosed) {
+				return 0
 			}
+			// Deadline exceeded is a normal exit for timed streams.
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return 0
+			}
+			fmt.Fprintln(os.Stderr, err)
 			return 0
 		}
 
@@ -277,36 +339,27 @@ func runPing(args []string) int {
 	return 0
 }
 
-func runClearNotifications(service string, args []string) int {
-	flags := flag.NewFlagSet("clear-notifications", flag.ContinueOnError)
-	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	bot := flags.String("bot", "", "bot name from config")
-	target := flags.String("target", "", "clear by destination id")
-	channel := flags.String("channel", "", "clear by channel id")
-	thread := flags.String("thread", "", "clear by thread id")
-	id := flags.Int64("id", 0, "clear a single notification by notification id")
-	all := flags.Bool("all", false, "allow broad clear across scope")
-	unseenOnly := flags.Bool("unseen", true, "clear only unseen notifications")
-	jsonOut := flags.Bool("json", false, "print JSON response")
-	if err := flags.Parse(args); err != nil {
+func runClear(service string, socket string, bot string, target string, channel string, thread string, search string, unseen bool, all bool, forceNotify bool, jsonOut bool) int {
+	if !all && strings.TrimSpace(bot) == "" && strings.TrimSpace(target) == "" && strings.TrimSpace(channel) == "" && strings.TrimSpace(thread) == "" {
+		fmt.Fprintln(os.Stderr, "refusing broad clear without scope: provide filters or --all")
 		return 2
 	}
 
-	if *id <= 0 && !*all && strings.TrimSpace(*bot) == "" && strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
-		fmt.Fprintln(os.Stderr, "refusing broad clear without scope: provide --id, filters, or --all")
-		return 2
+	action := protocol.ActionClearHistory
+	if forceNotify {
+		action = protocol.ActionClearNotify
 	}
 
-	resp, err := call(*socket, protocol.Request{
-		Action:         protocol.ActionClearNotify,
-		Service:        service,
-		Bot:            *bot,
-		Target:         *target,
-		Channel:        *channel,
-		Thread:         *thread,
-		Unseen:         *unseenOnly,
-		All:            *all,
-		NotificationID: *id,
+	resp, err := call(socket, protocol.Request{
+		Action:  action,
+		Service: service,
+		Bot:     bot,
+		Target:  target,
+		Channel: channel,
+		Thread:  thread,
+		Search:  search,
+		Unseen:  unseen,
+		All:     all,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -318,7 +371,7 @@ func runClearNotifications(service string, args []string) int {
 		return 1
 	}
 
-	if *jsonOut {
+	if jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(resp)
 		return 0
 	}
@@ -347,7 +400,7 @@ func call(socket string, request protocol.Request) (protocol.Response, error) {
 }
 
 func printEvent(event protocol.Event) {
-	fmt.Printf("%d\tnid=%d\tseen=%t\t%s\t%s/%s\t%s\t%s\tnotify=%t direct=%t mention=%t\ttarget=%s channel=%s thread=%s\t%s\n",
+	fmt.Printf("%d\tnid=%d\tseen=%t\t%s\t%s/%s\t%s\t%s\tuser=%s self=%t\tnotify=%t direct=%t mention=%t\ttarget=%s channel=%s thread=%s\t%s\n",
 		event.ID,
 		event.NotificationID,
 		event.Seen,
@@ -356,6 +409,8 @@ func printEvent(event protocol.Event) {
 		event.Bot,
 		event.Kind,
 		event.Direction,
+		event.User,
+		event.Self,
 		event.Notify,
 		event.Direct,
 		event.Mentions,
@@ -373,16 +428,62 @@ func toAction(notifications bool) string {
 	return protocol.ActionHistory
 }
 
-func printUsage(toolName string) {
-	fmt.Fprintf(os.Stderr, `%s - service client for pantalkd
+// resolveService returns the service to use for a request. The --service flag
+// value is used when provided; otherwise the service is auto-resolved from the
+// bot name by the daemon.
+func resolveService(binaryService string, flagService string) string {
+	if binaryService != "" {
+		return binaryService
+	}
+	return flagService
+}
 
-Usage:
-  %s bots [--socket path] [--json]
-	%s send --bot NAME --text MESSAGE (--target ID | --channel ID | --thread ID) [--socket path]
-	%s history [--bot NAME] [--target ID] [--channel ID] [--thread ID] [--notify] [--limit N] [--since ID] [--socket path] [--json]
-	%s notifications [--bot NAME] [--target ID] [--channel ID] [--thread ID] [--unseen] [--limit N] [--since ID] [--socket path] [--json]
-	%s clear-notifications [--id N | --bot NAME | --target ID | --channel ID | --thread ID | --all] [--unseen] [--socket path] [--json]
-	%s stream [--bot NAME] [--target ID] [--channel ID] [--thread ID] [--notify] [--socket path] [--json]
-  %s ping [--socket path]
-`, toolName, toolName, toolName, toolName, toolName, toolName, toolName, toolName)
+func printUsage(toolName string) {
+	svcHint := ""
+	if toolName == "pantalk" {
+		svcHint = " [--service NAME]"
+	}
+
+	fmt.Fprintf(os.Stderr, `%s - unified CLI for pantalk
+
+Messaging:
+  %s bots%s [--json]
+  %s send --bot NAME --text MESSAGE (--target ID | --channel ID | --thread ID)%s [--json]
+  %s history [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--limit N] [--since ID] [--clear [--all]]%s [--json]
+  %s notifications [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--unseen] [--limit N] [--since ID] [--clear [--all]]%s [--json]
+  %s stream [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--timeout N]%s [--json]
+  %s ping
+
+Skills:
+  %s skill install [--scope project|user|all] [--agents ...] [--repo URL] [--dry-run]
+  %s skill update  [--scope project|user|all] [--agents ...]
+  %s skill list
+
+Admin:
+  %s setup [--output PATH] [--force]
+  %s validate [--config PATH]
+  %s reload [--socket PATH]
+  %s config print [--config PATH]
+  %s config set-server [--socket ...] [--db ...] [--history ...]
+  %s config add-bot --name NAME --type TYPE [--bot-token ...] [--app-level-token ...] [--endpoint ...] [--transport ...] [--channels ...]
+  %s config remove-bot --name NAME
+
+JSON output is enabled by default when stdout is not a terminal.
+`, toolName,
+		toolName, svcHint,
+		toolName, svcHint,
+		toolName, svcHint,
+		toolName, svcHint,
+		toolName, svcHint,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName,
+		toolName)
 }

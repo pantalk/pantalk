@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -18,8 +19,8 @@ import (
 	"github.com/chatbotkit/pantalk/internal/protocol"
 )
 
-const defaultConfigPath = "./configs/pantalk.yaml"
-const defaultSocketPath = "/tmp/pantalk.sock"
+var defaultConfigPath = config.DefaultConfigPath()
+var defaultSocketPath = config.DefaultSocketPath()
 
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -139,10 +140,6 @@ func runConfig(args []string) error {
 		return runConfigPrint(subArgs)
 	case "set-server":
 		return runConfigSetServer(subArgs)
-	case "add-service":
-		return runConfigAddService(subArgs)
-	case "remove-service":
-		return runConfigRemoveService(subArgs)
 	case "add-bot":
 		return runConfigAddBot(subArgs)
 	case "remove-bot":
@@ -216,18 +213,22 @@ func runConfigSetServer(args []string) error {
 	return nil
 }
 
-func runConfigAddService(args []string) error {
-	flags := flag.NewFlagSet("config add-service", flag.ContinueOnError)
+func runConfigAddBot(args []string) error {
+	flags := flag.NewFlagSet("config add-bot", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "config path")
-	name := flags.String("name", "", "service name")
-	transport := flags.String("transport", "", "custom transport (for non-built-in services)")
-	endpoint := flags.String("endpoint", "", "service endpoint (required for mattermost/custom)")
+	name := flags.String("name", "", "bot name")
+	botType := flags.String("type", "", "bot type (slack, discord, mattermost, telegram)")
+	botToken := flags.String("bot-token", "", "bot_token (literal or $ENV_VAR)")
+	appLevelToken := flags.String("app-level-token", "", "app_level_token (slack only)")
+	transport := flags.String("transport", "", "custom transport (for non-built-in types)")
+	endpoint := flags.String("endpoint", "", "endpoint (required for mattermost/custom)")
+	channels := flags.String("channels", "", "comma-separated channels")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 
-	if strings.TrimSpace(*name) == "" {
-		return errors.New("--name is required")
+	if strings.TrimSpace(*name) == "" || strings.TrimSpace(*botType) == "" {
+		return errors.New("--name and --type are required")
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -235,31 +236,34 @@ func runConfigAddService(args []string) error {
 		return err
 	}
 
-	for _, service := range cfg.Services {
-		if service.Name == strings.TrimSpace(*name) {
-			return fmt.Errorf("service %q already exists", *name)
+	for _, existingBot := range cfg.Bots {
+		if existingBot.Name == strings.TrimSpace(*name) {
+			return fmt.Errorf("bot %q already exists", *name)
 		}
 	}
 
-	cfg.Services = append(cfg.Services, config.ServiceConfig{
-		Name:      strings.TrimSpace(*name),
-		Transport: strings.TrimSpace(*transport),
-		Endpoint:  strings.TrimSpace(*endpoint),
-		Bots:      []config.BotConfig{},
+	cfg.Bots = append(cfg.Bots, config.BotConfig{
+		Name:          strings.TrimSpace(*name),
+		Type:          strings.TrimSpace(*botType),
+		BotToken:      strings.TrimSpace(*botToken),
+		AppLevelToken: strings.TrimSpace(*appLevelToken),
+		Transport:     strings.TrimSpace(*transport),
+		Endpoint:      strings.TrimSpace(*endpoint),
+		Channels:      splitCSV(*channels),
 	})
 
 	if err := saveConfigValidated(*configPath, cfg); err != nil {
 		return err
 	}
 
-	fmt.Printf("added service %s\n", *name)
+	fmt.Printf("added bot %s (type: %s)\n", *name, *botType)
 	return nil
 }
 
-func runConfigRemoveService(args []string) error {
-	flags := flag.NewFlagSet("config remove-service", flag.ContinueOnError)
+func runConfigRemoveBot(args []string) error {
+	flags := flag.NewFlagSet("config remove-bot", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "config path")
-	name := flags.String("name", "", "service name")
+	name := flags.String("name", "", "bot name")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -273,148 +277,36 @@ func runConfigRemoveService(args []string) error {
 		return err
 	}
 
-	updated := make([]config.ServiceConfig, 0, len(cfg.Services))
+	updated := make([]config.BotConfig, 0, len(cfg.Bots))
 	removed := false
-	for _, service := range cfg.Services {
-		if service.Name == strings.TrimSpace(*name) {
+	for _, bot := range cfg.Bots {
+		if bot.Name == strings.TrimSpace(*name) {
 			removed = true
 			continue
 		}
-		updated = append(updated, service)
+		updated = append(updated, bot)
 	}
 
 	if !removed {
-		return fmt.Errorf("service %q not found", *name)
+		return fmt.Errorf("bot %q not found", *name)
 	}
 
-	cfg.Services = updated
+	cfg.Bots = updated
 	if err := saveConfigValidated(*configPath, cfg); err != nil {
 		return err
 	}
 
-	fmt.Printf("removed service %s\n", *name)
-	return nil
-}
-
-func runConfigAddBot(args []string) error {
-	flags := flag.NewFlagSet("config add-bot", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "config path")
-	serviceName := flags.String("service", "", "service name")
-	name := flags.String("name", "", "bot name")
-	botID := flags.String("bot-id", "", "bot_id")
-	botToken := flags.String("bot-token", "", "bot_token (literal or $ENV_VAR)")
-	appLevelToken := flags.String("app-level-token", "", "app_level_token (slack only)")
-	channels := flags.String("channels", "", "comma-separated channels")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-
-	if strings.TrimSpace(*serviceName) == "" || strings.TrimSpace(*name) == "" || strings.TrimSpace(*botID) == "" {
-		return errors.New("--service, --name, and --bot-id are required")
-	}
-
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	found := false
-	for index := range cfg.Services {
-		service := &cfg.Services[index]
-		if service.Name != strings.TrimSpace(*serviceName) {
-			continue
-		}
-
-		found = true
-		for _, existingBot := range service.Bots {
-			if existingBot.Name == strings.TrimSpace(*name) {
-				return fmt.Errorf("bot %q already exists in service %q", *name, *serviceName)
-			}
-		}
-
-		service.Bots = append(service.Bots, config.BotConfig{
-			Name:          strings.TrimSpace(*name),
-			BotID:         strings.TrimSpace(*botID),
-			BotToken:      strings.TrimSpace(*botToken),
-			AppLevelToken: strings.TrimSpace(*appLevelToken),
-			Channels:      splitCSV(*channels),
-		})
-		break
-	}
-
-	if !found {
-		return fmt.Errorf("service %q not found", *serviceName)
-	}
-
-	if err := saveConfigValidated(*configPath, cfg); err != nil {
-		return err
-	}
-
-	fmt.Printf("added bot %s to service %s\n", *name, *serviceName)
-	return nil
-}
-
-func runConfigRemoveBot(args []string) error {
-	flags := flag.NewFlagSet("config remove-bot", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "config path")
-	serviceName := flags.String("service", "", "service name")
-	name := flags.String("name", "", "bot name")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-
-	if strings.TrimSpace(*serviceName) == "" || strings.TrimSpace(*name) == "" {
-		return errors.New("--service and --name are required")
-	}
-
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	serviceFound := false
-	botRemoved := false
-	for index := range cfg.Services {
-		service := &cfg.Services[index]
-		if service.Name != strings.TrimSpace(*serviceName) {
-			continue
-		}
-
-		serviceFound = true
-		updatedBots := make([]config.BotConfig, 0, len(service.Bots))
-		for _, bot := range service.Bots {
-			if bot.Name == strings.TrimSpace(*name) {
-				botRemoved = true
-				continue
-			}
-			updatedBots = append(updatedBots, bot)
-		}
-		service.Bots = updatedBots
-		break
-	}
-
-	if !serviceFound {
-		return fmt.Errorf("service %q not found", *serviceName)
-	}
-	if !botRemoved {
-		return fmt.Errorf("bot %q not found in service %q", *name, *serviceName)
-	}
-
-	if err := saveConfigValidated(*configPath, cfg); err != nil {
-		return err
-	}
-
-	fmt.Printf("removed bot %s from service %s\n", *name, *serviceName)
+	fmt.Printf("removed bot %s\n", *name)
 	return nil
 }
 
 func runWizard(reader *bufio.Reader) (config.Config, error) {
-	socketPath, err := promptText(reader, "server socket path", "/tmp/pantalk.sock", true)
+	socketPath, err := promptText(reader, "server socket path", config.DefaultSocketPath(), true)
 	if err != nil {
 		return config.Config{}, err
 	}
 
-	dbPath, err := promptText(reader, "server db path", "/tmp/pantalk.db", true)
+	dbPath, err := promptText(reader, "server db path", config.DefaultDBPath(), true)
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -429,25 +321,33 @@ func runWizard(reader *bufio.Reader) (config.Config, error) {
 		return config.Config{}, errors.New("notification history size must be a positive integer")
 	}
 
-	services := make([]config.ServiceConfig, 0)
+	bots := make([]config.BotConfig, 0)
 	for {
 		provider, chooseErr := chooseProvider(reader)
 		if chooseErr != nil {
 			return config.Config{}, chooseErr
 		}
 		if provider == "done" {
-			if len(services) == 0 {
-				fmt.Println("add at least one service")
+			if len(bots) == 0 {
+				fmt.Println("add at least one bot")
 				continue
 			}
 			break
 		}
 
-		service, buildErr := buildService(reader, provider)
+		bot, buildErr := buildBot(reader, provider)
 		if buildErr != nil {
 			return config.Config{}, buildErr
 		}
-		services = append(services, service)
+		bots = append(bots, bot)
+
+		addMore, addErr := promptYesNo(reader, "add another bot?", false)
+		if addErr != nil {
+			return config.Config{}, addErr
+		}
+		if !addMore {
+			break
+		}
 	}
 
 	return config.Config{
@@ -456,54 +356,12 @@ func runWizard(reader *bufio.Reader) (config.Config, error) {
 			DBPath:      dbPath,
 			HistorySize: historySize,
 		},
-		Services: services,
+		Bots: bots,
 	}, nil
-}
-
-func buildService(reader *bufio.Reader, provider string) (config.ServiceConfig, error) {
-	serviceName, err := promptText(reader, fmt.Sprintf("service name for %s", provider), provider, true)
-	if err != nil {
-		return config.ServiceConfig{}, err
-	}
-
-	service := config.ServiceConfig{Name: serviceName}
-
-	if provider == "mattermost" {
-		endpoint, endpointErr := promptText(reader, "mattermost endpoint", "https://mattermost.example.com", true)
-		if endpointErr != nil {
-			return config.ServiceConfig{}, endpointErr
-		}
-		service.Endpoint = endpoint
-	}
-
-	bots := make([]config.BotConfig, 0)
-	for {
-		bot, botErr := buildBot(reader, provider)
-		if botErr != nil {
-			return config.ServiceConfig{}, botErr
-		}
-		bots = append(bots, bot)
-
-		addMore, addErr := promptYesNo(reader, "add another bot for this service?", false)
-		if addErr != nil {
-			return config.ServiceConfig{}, addErr
-		}
-		if !addMore {
-			break
-		}
-	}
-
-	service.Bots = bots
-	return service, nil
 }
 
 func buildBot(reader *bufio.Reader, provider string) (config.BotConfig, error) {
 	botName, err := promptText(reader, fmt.Sprintf("%s bot name", provider), provider+"-bot", true)
-	if err != nil {
-		return config.BotConfig{}, err
-	}
-
-	botID, err := promptText(reader, fmt.Sprintf("%s bot_id", provider), provider+"-"+botName, true)
 	if err != nil {
 		return config.BotConfig{}, err
 	}
@@ -516,7 +374,7 @@ func buildBot(reader *bufio.Reader, provider string) (config.BotConfig, error) {
 
 	b := config.BotConfig{
 		Name:     botName,
-		BotID:    botID,
+		Type:     provider,
 		BotToken: botToken,
 	}
 
@@ -526,6 +384,14 @@ func buildBot(reader *bufio.Reader, provider string) (config.BotConfig, error) {
 			return config.BotConfig{}, appErr
 		}
 		b.AppLevelToken = appToken
+	}
+
+	if provider == "mattermost" {
+		endpoint, endpointErr := promptText(reader, "mattermost endpoint", "https://mattermost.example.com", true)
+		if endpointErr != nil {
+			return config.BotConfig{}, endpointErr
+		}
+		b.Endpoint = endpoint
 	}
 
 	channelsRaw, channelsErr := promptText(reader, fmt.Sprintf("%s channels (comma-separated, empty for all)", provider), "", false)
@@ -538,7 +404,7 @@ func buildBot(reader *bufio.Reader, provider string) (config.BotConfig, error) {
 }
 
 func chooseProvider(reader *bufio.Reader) (string, error) {
-	fmt.Println("\nSelect a service to configure:")
+	fmt.Println("\nSelect a bot type to configure:")
 	fmt.Println("  1) slack")
 	fmt.Println("  2) discord")
 	fmt.Println("  3) mattermost")
@@ -688,6 +554,93 @@ func call(socket string, request protocol.Request) (protocol.Response, error) {
 }
 
 func printSetupIntro() {
+	// Target color: teal accent RGB(36, 219, 198)
+	const tr, tg, tb = 36, 219, 198
+	const reset = "\033[0m"
+	const hideCursor = "\033[?25l"
+	const showCursor = "\033[?25h"
+
+	mascotLines := []string{
+		`                                       =====                                       `,
+		`                                ===================                                `,
+		`                             =========================                             `,
+		`                          ========               ========                          `,
+		`                        =======                     =======                        `,
+		`                      ======                           ======                      `,
+		`                     =====                               =====                     `,
+		`                    =====                                 =====                    `,
+		`                   =====                                    ====                   `,
+		`                  ====                                       ====                  `,
+		`                 =====                                       =====                 `,
+		`                 ====            =               =            ====                 `,
+		`            =========         =======         =======         =========            `,
+		`          ===========        =========       =========        ===========          `,
+		`         ====    ====        =========       =========        ====    ====         `,
+		`         ===     ====         =======         =======         ====     ===         `,
+		`         ===     ====           ===              ==           ====     ===         `,
+		`         ===     ====                                         ====     ===         `,
+		`         ===     ====                                         ====     ===         `,
+		`         ===     ====                                         ====     ===         `,
+		`         ====    ====          =====           =====          ====    ====         `,
+		`          ===========           =======     =======           ===========          `,
+		`             ========             ===============             ========             `,
+		`                 ====                +========                ====                 `,
+		`                 ====                                         ====                 `,
+		`                 ====                                         ====                 `,
+		`                 ====                                         ====                 `,
+		`                 ====              =======              ==========                 `,
+		`                 ======          ===========          ============                 `,
+		`                 ========      ======   ======      ======   =====                 `,
+		`                 === ==============       =============        ===                 `,
+		`                       ==========           ==========                             `,
+		`                           ==                   ==                                 `,
+	}
+
+	// Hide cursor during animation.
+	fmt.Print(hideCursor)
+
+	// Phase 1: reveal lines top-to-bottom at dim brightness, accelerating.
+	for i, line := range mascotLines {
+		// Ramp brightness from ~30% to ~70% during reveal.
+		frac := float64(i) / float64(len(mascotLines)-1)
+		brightness := 0.3 + 0.4*frac
+		r := int(float64(tr) * brightness)
+		g := int(float64(tg) * brightness)
+		b := int(float64(tb) * brightness)
+		fmt.Printf("\033[38;2;%d;%d;%dm%s%s\n", r, g, b, line, reset)
+		// Start slow (30ms), speed up to 10ms.
+		delay := time.Duration(30-int(20*frac)) * time.Millisecond
+		time.Sleep(delay)
+	}
+
+	// Phase 2: "glow up" - redraw the whole mascot brightening to full color.
+	steps := 6
+	for s := 1; s <= steps; s++ {
+		// Move cursor up to top of mascot.
+		fmt.Printf("\033[%dA", len(mascotLines))
+		brightness := 0.7 + 0.3*float64(s)/float64(steps)
+		r := int(float64(tr) * brightness)
+		g := int(float64(tg) * brightness)
+		b := int(float64(tb) * brightness)
+		if r > tr {
+			r = tr
+		}
+		if g > tg {
+			g = tg
+		}
+		if b > tb {
+			b = tb
+		}
+		for _, line := range mascotLines {
+			fmt.Printf("\033[38;2;%d;%d;%dm%s%s\n", r, g, b, line, reset)
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+
+	// Show cursor again.
+	fmt.Print(showCursor)
+
+	fmt.Println()
 	fmt.Println("Pantalk Setup Wizard")
 	fmt.Println("--------------------")
 	fmt.Println("This interactive setup writes a strict pantalk config file.")
@@ -696,26 +649,24 @@ func printSetupIntro() {
 }
 
 func printUsage() {
-	fmt.Print(`pantalkctl - pantalk control utility
+	fmt.Printf(`pantalk admin commands
 
 Usage:
-  pantalkctl setup [--output ./configs/pantalk.yaml] [--force]
-  pantalkctl validate [--config ./configs/pantalk.yaml]
-	pantalkctl reload [--socket /tmp/pantalk.sock]
-	pantalkctl config <subcommand> [options]
-  pantalkctl help
-`)
+  pantalk setup [--output %s] [--force]
+  pantalk validate [--config %s]
+  pantalk reload [--socket %s]
+  pantalk config <subcommand> [options]
+  pantalk help
+`, defaultConfigPath, defaultConfigPath, defaultSocketPath)
 }
 
 func printConfigUsage() {
-	fmt.Print(`pantalkctl config commands
+	fmt.Printf(`pantalk config commands
 
 Usage:
-	pantalkctl config print [--config ./configs/pantalk.yaml]
-	pantalkctl config set-server --config ./configs/pantalk.yaml [--socket ...] [--db ...] [--history ...]
-	pantalkctl config add-service --config ./configs/pantalk.yaml --name <service> [--transport ...] [--endpoint ...]
-	pantalkctl config remove-service --config ./configs/pantalk.yaml --name <service>
-	pantalkctl config add-bot --config ./configs/pantalk.yaml --service <service> --name <bot> --bot-id <id> [--bot-token ...] [--app-level-token ...] [--channels a,b]
-	pantalkctl config remove-bot --config ./configs/pantalk.yaml --service <service> --name <bot>
-`)
+  pantalk config print [--config %s]
+  pantalk config set-server --config <path> [--socket ...] [--db ...] [--history ...]
+  pantalk config add-bot --config <path> --name <bot> --type <type> [--bot-token ...] [--app-level-token ...] [--endpoint ...] [--transport ...] [--channels a,b]
+  pantalk config remove-bot --config <path> --name <bot>
+`, defaultConfigPath)
 }

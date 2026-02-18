@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -27,6 +28,7 @@ type Server struct {
 
 	socketOverride string
 	dbOverride     string
+	debug          bool
 
 	rootCtx       context.Context
 	runtimeCancel context.CancelFunc
@@ -52,10 +54,17 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 	}
 }
 
+// SetDebug enables verbose debug logging.
+func (s *Server) SetDebug(enabled bool) {
+	s.debug = enabled
+}
+
 func (s *Server) Run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	s.rootCtx = ctx
+
+	log.Printf("opening database at %s", s.cfg.Server.DBPath)
 
 	notificationStore, err := store.Open(s.cfg.Server.DBPath)
 	if err != nil {
@@ -74,20 +83,29 @@ func (s *Server) Run() error {
 	}
 	defer listener.Close()
 
-	if err := os.Chmod(s.cfg.Server.SocketPath, 0660); err != nil {
+	if err := os.Chmod(s.cfg.Server.SocketPath, 0600); err != nil {
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 
 	s.listener = listener
 
+	log.Printf("listening on %s", s.cfg.Server.SocketPath)
+
 	if err := s.startConnectors(s.cfg); err != nil {
 		return err
 	}
 
+	log.Printf("pantalkd ready (%d bot(s) configured)", len(s.cfg.Bots))
+
 	go func() {
 		<-ctx.Done()
+		log.Printf("shutting down")
 		_ = s.listener.Close()
 	}()
+
+	if s.debug {
+		log.Printf("debug mode enabled")
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -109,27 +127,33 @@ func (s *Server) startConnectors(cfg config.Config) error {
 	bots := make(map[string]protocol.BotRef)
 	connectors := make(map[string]upstream.Connector)
 
-	for _, service := range cfg.Services {
-		for _, bot := range service.Bots {
-			key := botKey(service.Name, bot.Name)
-			botRef := protocol.BotRef{
-				Service: service.Name,
-				Name:    bot.Name,
-				BotID:   bot.BotID,
-			}
-			bots[key] = botRef
+	for _, bot := range cfg.Bots {
+		key := botKey(bot.Type, bot.Name)
 
-			connector, err := upstream.NewConnector(service, bot, func(event protocol.Event) {
-				event.Service = service.Name
-				event.Bot = bot.Name
-				s.publish(event)
-			})
-			if err != nil {
-				return fmt.Errorf("create connector for %s: %w", key, err)
-			}
-
-			connectors[key] = connector
+		displayName := bot.DisplayName
+		if displayName == "" {
+			displayName = bot.Name
 		}
+
+		botRef := protocol.BotRef{
+			Service:     bot.Type,
+			Name:        bot.Name,
+			DisplayName: displayName,
+		}
+		bots[key] = botRef
+
+		connector, err := upstream.NewConnector(bot, func(event protocol.Event) {
+			event.Service = bot.Type
+			event.Bot = bot.Name
+			s.publish(event)
+		})
+		if err != nil {
+			return fmt.Errorf("create connector for %s: %w", key, err)
+		}
+
+		connectors[key] = connector
+
+		log.Printf("bot %s (%s) registered", bot.Name, bot.Type)
 	}
 
 	runtimeCtx, runtimeCancel := context.WithCancel(s.rootCtx)
@@ -147,7 +171,8 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		oldCancel()
 	}
 
-	for _, connector := range connectors {
+	for key, connector := range connectors {
+		log.Printf("starting connector %s", key)
 		go connector.Run(runtimeCtx)
 	}
 
@@ -192,30 +217,46 @@ func (s *Server) handleSubscribe(ctx context.Context, req protocol.Request, enco
 		return
 	}
 
+	// Fan-in: merge all per-bot channels into a single channel so we can
+	// block cleanly instead of busy-polling.
+	merged := make(chan protocol.Event, 64)
+	var fanInDone sync.WaitGroup
+	fanInDone.Add(len(channels))
+	for _, ch := range channels {
+		go func(src chan protocol.Event) {
+			defer fanInDone.Done()
+			for ev := range src {
+				select {
+				case merged <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}(ch)
+	}
+	go func() {
+		fanInDone.Wait()
+		close(merged)
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-
-		for _, ch := range channels {
-			select {
-			case ev := <-ch:
-				if !matchEventFilters(ev, req.Target, req.Channel, req.Thread) {
-					continue
-				}
-				if req.Notify && !ev.Notify {
-					continue
-				}
-				if err := encoder.Encode(protocol.Response{OK: true, Event: &ev}); err != nil {
-					return
-				}
-			default:
+		case ev, ok := <-merged:
+			if !ok {
+				return
+			}
+			if !matchEventFilters(ev, req.Target, req.Channel, req.Thread, req.Search) {
+				continue
+			}
+			if req.Notify && !ev.Notify {
+				continue
+			}
+			if err := encoder.Encode(protocol.Response{OK: true, Event: &ev}); err != nil {
+				return
 			}
 		}
-
-		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -224,6 +265,9 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 	case protocol.ActionPing:
 		return protocol.Response{OK: true, Ack: "pong"}
 	case protocol.ActionBots:
+		if s.debug {
+			log.Printf("debug: request action=%s service=%q bot=%q", req.Action, req.Service, req.Bot)
+		}
 		bots := s.listBots(req.Service)
 		return protocol.Response{OK: true, Bots: bots}
 	case protocol.ActionNotify:
@@ -238,9 +282,15 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 			return protocol.Response{OK: false, Error: err.Error()}
 		}
 		return protocol.Response{OK: true, Cleared: cleared, Ack: fmt.Sprintf("cleared %d notifications", cleared)}
+	case protocol.ActionClearHistory:
+		cleared, err := s.clearHistory(req)
+		if err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+		return protocol.Response{OK: true, Cleared: cleared, Ack: fmt.Sprintf("cleared %d events", cleared)}
 	case protocol.ActionHistory:
 		notifyOnly := req.Notify
-		events, err := s.readEvents(req.Service, req.Bot, req.Limit, req.SinceID, req.Target, req.Channel, req.Thread, notifyOnly)
+		events, err := s.readEvents(req.Service, req.Bot, req.Limit, req.SinceID, req.Target, req.Channel, req.Thread, req.Search, notifyOnly)
 		if err != nil {
 			return protocol.Response{OK: false, Error: err.Error()}
 		}
@@ -253,12 +303,33 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 			return protocol.Response{OK: false, Error: "at least one of target, channel, or thread is required"}
 		}
 
-		key := botKey(req.Service, req.Bot)
+		if s.debug {
+			log.Printf("debug: send request bot=%q target=%q channel=%q text=%q", req.Bot, req.Target, req.Channel, req.Text)
+		}
+
+		resolvedService, resolvedBot, err := s.resolveBotService(req.Service, req.Bot)
+		if err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+
+		// Auto-resolve channel from thread when only --thread is provided.
+		if strings.TrimSpace(req.Channel) == "" && strings.TrimSpace(req.Target) == "" && strings.TrimSpace(req.Thread) != "" {
+			if s.notifications != nil {
+				if ch, lookupErr := s.notifications.LookupChannelByThread(resolvedService, resolvedBot, req.Thread); lookupErr == nil && ch != "" {
+					req.Channel = ch
+					if s.debug {
+						log.Printf("debug: resolved channel %q from thread %q", ch, req.Thread)
+					}
+				}
+			}
+		}
+
+		key := botKey(resolvedService, resolvedBot)
 		s.mu.RLock()
 		connector, ok := s.connectors[key]
 		s.mu.RUnlock()
 		if !ok {
-			return protocol.Response{OK: false, Error: fmt.Sprintf("unknown bot %q for service %q", req.Bot, req.Service)}
+			return protocol.Response{OK: false, Error: fmt.Sprintf("unknown bot %q for service %q", resolvedBot, resolvedService)}
 		}
 
 		s.markParticipation(key, req.Target, req.Channel, req.Thread)
@@ -267,6 +338,9 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 		if err != nil {
 			return protocol.Response{OK: false, Error: err.Error()}
 		}
+
+		// Annotate self flag on the send response (publish callback works on a copy).
+		event.Self = connector.Identity() != "" && event.User == connector.Identity()
 
 		return protocol.Response{OK: true, Ack: fmt.Sprintf("sent event %d", event.ID), Event: &event}
 	case protocol.ActionReload:
@@ -284,9 +358,12 @@ func (s *Server) listBots(service string) []protocol.BotRef {
 	defer s.mu.RUnlock()
 
 	result := make([]protocol.BotRef, 0, len(s.bots))
-	for _, bot := range s.bots {
+	for key, bot := range s.bots {
 		if service != "" && bot.Service != service {
 			continue
+		}
+		if connector := s.connectors[key]; connector != nil {
+			bot.BotID = connector.Identity()
 		}
 		result = append(result, bot)
 	}
@@ -301,7 +378,7 @@ func (s *Server) listBots(service string) []protocol.BotRef {
 	return result
 }
 
-func (s *Server) readEvents(service string, bot string, limit int, sinceID int64, target string, channel string, thread string, notifyOnly bool) ([]protocol.Event, error) {
+func (s *Server) readEvents(service string, bot string, limit int, sinceID int64, target string, channel string, thread string, search string, notifyOnly bool) ([]protocol.Event, error) {
 	if s.notifications == nil {
 		return nil, errors.New("store is not available")
 	}
@@ -311,16 +388,23 @@ func (s *Server) readEvents(service string, bot string, limit int, sinceID int64
 		return nil, err
 	}
 
-	return s.notifications.ListEvents(store.EventFilter{
+	events, err := s.notifications.ListEvents(store.EventFilter{
 		Service:    service,
 		Bot:        bot,
 		Target:     target,
 		Channel:    channel,
 		Thread:     thread,
+		Search:     search,
 		Limit:      limit,
 		SinceID:    sinceID,
 		NotifyOnly: notifyOnly,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.annotateSelf(events)
+	return events, nil
 }
 
 func (s *Server) publish(event protocol.Event) {
@@ -331,13 +415,42 @@ func (s *Server) publish(event protocol.Event) {
 	key := botKey(event.Service, event.Bot)
 	s.mu.RLock()
 	botRef := s.bots[key]
+	connector := s.connectors[key]
 	s.mu.RUnlock()
 
+	if connector != nil {
+		botRef.BotID = connector.Identity()
+	}
+
+	event.Self = botRef.BotID != "" && event.User == botRef.BotID
 	event.Mentions = mentionsAgent(event, botRef)
 	event.Direct = isDirectToAgent(event)
 	event.Notify = event.Direction == "in" && (event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
 
-	if s.notifications != nil {
+	if event.Kind == "status" {
+		log.Printf("[%s] %s", key, event.Text)
+	} else if event.Kind == "message" {
+		tag := event.Direction
+		if event.Notify {
+			if event.Direct {
+				tag += " (direct)"
+			} else if event.Mentions {
+				tag += " (mention)"
+			} else {
+				tag += " (notify)"
+			}
+		}
+		log.Printf("[%s] %s message on %s", key, tag, event.Channel)
+		if s.debug {
+			log.Printf("[%s] debug: target=%s channel=%s thread=%s text=%q", key, event.Target, event.Channel, event.Thread, event.Text)
+		}
+	} else if event.Kind == "heartbeat" {
+		if s.debug {
+			log.Printf("[%s] debug: heartbeat", key)
+		}
+	}
+
+	if s.notifications != nil && event.Kind == "message" {
 		eventID, err := s.notifications.InsertEvent(event)
 		if err == nil {
 			event.ID = eventID
@@ -358,6 +471,7 @@ func (s *Server) publish(event protocol.Event) {
 		select {
 		case ch <- event:
 		default:
+			log.Printf("warning: dropped event %d for subscriber on %s (buffer full)", event.ID, key)
 		}
 	}
 }
@@ -391,9 +505,13 @@ func (s *Server) reloadConfig() error {
 		return fmt.Errorf("reload cannot change db_path at runtime (current=%q new=%q), restart daemon", currentDB, cfg.Server.DBPath)
 	}
 
+	log.Printf("reloading configuration from %s", s.cfgPath)
+
 	if err := s.startConnectors(cfg); err != nil {
 		return fmt.Errorf("reload connectors: %w", err)
 	}
+
+	log.Printf("configuration reloaded (%d bot(s))", len(cfg.Bots))
 
 	return nil
 }
@@ -408,6 +526,21 @@ func (s *Server) resolveSelector(service string, bot string) ([]string, error) {
 			return nil, fmt.Errorf("unknown bot %q for service %q", bot, service)
 		}
 		return []string{key}, nil
+	}
+
+	// When service is empty but bot is specified, find the bot across all services
+	if service == "" && bot != "" {
+		var matches []string
+		for key, botRef := range s.bots {
+			if botRef.Name == bot {
+				matches = append(matches, key)
+			}
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("unknown bot %q", bot)
+		}
+		sort.Strings(matches)
+		return matches, nil
 	}
 
 	keys := make([]string, 0)
@@ -427,6 +560,41 @@ func (s *Server) resolveSelector(service string, bot string) ([]string, error) {
 
 	sort.Strings(keys)
 	return keys, nil
+}
+
+// resolveBotService resolves the service for a given bot name when service is
+// empty. If service is already provided, it is returned as-is. Returns an error
+// if the bot name is ambiguous across multiple services.
+func (s *Server) resolveBotService(service string, bot string) (string, string, error) {
+	if service != "" {
+		return service, bot, nil
+	}
+
+	if strings.TrimSpace(bot) == "" {
+		return "", "", errors.New("--bot is required")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var match protocol.BotRef
+	var count int
+
+	for _, botRef := range s.bots {
+		if botRef.Name == bot {
+			match = botRef
+			count++
+		}
+	}
+
+	if count == 0 {
+		return "", "", fmt.Errorf("unknown bot %q", bot)
+	}
+	if count > 1 {
+		return "", "", fmt.Errorf("ambiguous bot %q exists in multiple services, use --service to disambiguate", bot)
+	}
+
+	return match.Service, match.Name, nil
 }
 
 func (s *Server) subscribe(keys []string) []chan protocol.Event {
@@ -463,7 +631,7 @@ func botKey(service string, bot string) string {
 	return service + ":" + bot
 }
 
-func matchEventFilters(event protocol.Event, target string, channel string, thread string) bool {
+func matchEventFilters(event protocol.Event, target string, channel string, thread string, search string) bool {
 	if target != "" && event.Target != target {
 		return false
 	}
@@ -471,6 +639,9 @@ func matchEventFilters(event protocol.Event, target string, channel string, thre
 		return false
 	}
 	if thread != "" && event.Thread != thread {
+		return false
+	}
+	if search != "" && !strings.Contains(strings.ToLower(event.Text), strings.ToLower(search)) {
 		return false
 	}
 	return true
@@ -543,6 +714,26 @@ func isDirectToAgent(event protocol.Event) bool {
 	return event.Kind == "dm"
 }
 
+// annotateSelf sets the Self flag on events where User matches the bot's
+// runtime identity. This is used when serving stored events from the DB.
+func (s *Server) annotateSelf(events []protocol.Event) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range events {
+		key := botKey(events[i].Service, events[i].Bot)
+		if connector := s.connectors[key]; connector != nil {
+			identity := connector.Identity()
+			events[i].Self = identity != "" && events[i].User == identity
+			if s.debug {
+				log.Printf("debug: annotateSelf event=%d user=%q identity=%q self=%t", events[i].ID, events[i].User, identity, events[i].Self)
+			}
+		} else if s.debug {
+			log.Printf("debug: annotateSelf event=%d no connector for key=%q", events[i].ID, key)
+		}
+	}
+}
+
 func (s *Server) listNotifications(req protocol.Request) ([]protocol.Event, error) {
 	if s.notifications == nil {
 		return nil, errors.New("notification store is not available")
@@ -552,16 +743,23 @@ func (s *Server) listNotifications(req protocol.Request) ([]protocol.Event, erro
 		return nil, err
 	}
 
-	return s.notifications.ListNotifications(store.NotificationFilter{
+	events, err := s.notifications.ListNotifications(store.NotificationFilter{
 		Service: req.Service,
 		Bot:     req.Bot,
 		Target:  req.Target,
 		Channel: req.Channel,
 		Thread:  req.Thread,
+		Search:  req.Search,
 		Limit:   req.Limit,
 		SinceID: req.SinceID,
 		Unseen:  req.Unseen,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.annotateSelf(events)
+	return events, nil
 }
 
 func (s *Server) clearNotifications(req protocol.Request) (int64, error) {
@@ -573,25 +771,40 @@ func (s *Server) clearNotifications(req protocol.Request) (int64, error) {
 		return 0, err
 	}
 
-	if req.NotificationID > 0 {
-		return s.notifications.MarkSeenByID(req.NotificationID)
-	}
-
 	if !req.All && req.Bot == "" && req.Target == "" && req.Channel == "" && req.Thread == "" {
-		return 0, errors.New("refusing broad clear without --all (or specific filters/id)")
+		return 0, errors.New("refusing broad clear without --all (or specific filters)")
 	}
 
-	unseenOnly := req.Unseen
-	if !req.All {
-		unseenOnly = true
-	}
-
-	return s.notifications.MarkSeen(store.NotificationFilter{
+	return s.notifications.DeleteNotifications(store.NotificationFilter{
 		Service: req.Service,
 		Bot:     req.Bot,
 		Target:  req.Target,
 		Channel: req.Channel,
 		Thread:  req.Thread,
-		Unseen:  unseenOnly,
+		Search:  req.Search,
+		Unseen:  req.Unseen,
+	}, req.All)
+}
+
+func (s *Server) clearHistory(req protocol.Request) (int64, error) {
+	if s.notifications == nil {
+		return 0, errors.New("store is not available")
+	}
+
+	if _, err := s.resolveSelector(req.Service, req.Bot); err != nil {
+		return 0, err
+	}
+
+	if !req.All && req.Bot == "" && req.Target == "" && req.Channel == "" && req.Thread == "" {
+		return 0, errors.New("refusing broad clear without --all (or specific filters)")
+	}
+
+	return s.notifications.DeleteEvents(store.EventFilter{
+		Service: req.Service,
+		Bot:     req.Bot,
+		Target:  req.Target,
+		Channel: req.Channel,
+		Thread:  req.Thread,
+		Search:  req.Search,
 	}, req.All)
 }

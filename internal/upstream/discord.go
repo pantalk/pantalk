@@ -3,6 +3,7 @@ package upstream
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -14,10 +15,11 @@ import (
 )
 
 type DiscordConnector struct {
-	serviceName string
-	botName     string
-	publish     func(protocol.Event)
-	session     *discordgo.Session
+	serviceName  string
+	botName      string
+	publish      func(protocol.Event)
+	session      *discordgo.Session
+	disconnected chan struct{}
 
 	mu        sync.RWMutex
 	channels  map[string]struct{}
@@ -25,7 +27,7 @@ type DiscordConnector struct {
 	selfBotID string
 }
 
-func NewDiscordConnector(service config.ServiceConfig, bot config.BotConfig, publish func(protocol.Event)) (*DiscordConnector, error) {
+func NewDiscordConnector(bot config.BotConfig, publish func(protocol.Event)) (*DiscordConnector, error) {
 	token, err := config.ResolveCredential(bot.BotToken)
 	if err != nil {
 		return nil, fmt.Errorf("resolve discord bot_token for bot %q: %w", bot.Name, err)
@@ -39,11 +41,12 @@ func NewDiscordConnector(service config.ServiceConfig, bot config.BotConfig, pub
 	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages | discordgo.IntentMessageContent
 
 	connector := &DiscordConnector{
-		serviceName: service.Name,
-		botName:     bot.Name,
-		publish:     publish,
-		session:     session,
-		channels:    make(map[string]struct{}),
+		serviceName:  bot.Type,
+		botName:      bot.Name,
+		publish:      publish,
+		session:      session,
+		disconnected: make(chan struct{}, 1),
+		channels:     make(map[string]struct{}),
 	}
 
 	for _, channel := range bot.Channels {
@@ -55,14 +58,52 @@ func NewDiscordConnector(service config.ServiceConfig, bot config.BotConfig, pub
 	}
 
 	session.AddHandler(connector.onMessageCreate)
+	session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
+		select {
+		case connector.disconnected <- struct{}{}:
+		default:
+		}
+	})
 
 	return connector, nil
 }
 
 func (d *DiscordConnector) Run(ctx context.Context) {
+	backoff := time.Second
+
+	for {
+		select {
+		case <-ctx.Done():
+			d.publishStatus("connector offline")
+			return
+		default:
+		}
+
+		if err := d.connectAndRun(ctx); err != nil {
+			log.Printf("[discord:%s] session ended: %v", d.botName, err)
+			d.publishStatus("discord session ended: " + err.Error())
+		}
+
+		select {
+		case <-ctx.Done():
+			d.publishStatus("connector offline")
+			return
+		case <-time.After(backoff):
+		}
+
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+
+		d.publishStatus("discord reconnecting...")
+		log.Printf("[discord:%s] reconnecting", d.botName)
+	}
+}
+
+func (d *DiscordConnector) connectAndRun(ctx context.Context) error {
 	if err := d.session.Open(); err != nil {
-		d.publishStatus("discord connect failed: " + err.Error())
-		return
+		log.Printf("[discord:%s] connect failed: %v", d.botName, err)
+		return fmt.Errorf("connect failed: %w", err)
 	}
 
 	if stateUser := d.session.State.User; stateUser != nil {
@@ -70,6 +111,7 @@ func (d *DiscordConnector) Run(ctx context.Context) {
 		d.selfUser = stateUser.ID
 		d.selfBotID = stateUser.ID
 		d.mu.Unlock()
+		log.Printf("[discord:%s] authenticated (user=%s)", d.botName, stateUser.ID)
 	}
 
 	d.publishStatus("connector online")
@@ -81,8 +123,10 @@ func (d *DiscordConnector) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			_ = d.session.Close()
-			d.publishStatus("connector offline")
-			return
+			return ctx.Err()
+		case <-d.disconnected:
+			_ = d.session.Close()
+			return fmt.Errorf("gateway disconnected")
 		case <-heartbeatTicker.C:
 			d.publishHeartbeat()
 		}
@@ -113,13 +157,19 @@ func (d *DiscordConnector) Send(_ context.Context, request protocol.Request) (pr
 		return protocol.Event{}, err
 	}
 
+	target := request.Target
+	if target == "" {
+		target = "channel:" + posted.ChannelID
+	}
+
 	event := protocol.Event{
 		Timestamp: posted.Timestamp,
 		Service:   d.serviceName,
 		Bot:       d.botName,
 		Kind:      "message",
 		Direction: "out",
-		Target:    request.Target,
+		User:      d.Identity(),
+		Target:    target,
 		Channel:   posted.ChannelID,
 		Thread:    request.Thread,
 		Text:      trimmed,
@@ -154,6 +204,7 @@ func (d *DiscordConnector) onMessageCreate(_ *discordgo.Session, message *discor
 		Bot:       d.botName,
 		Kind:      "message",
 		Direction: "in",
+		User:      message.Author.ID,
 		Target:    "channel:" + message.ChannelID,
 		Channel:   message.ChannelID,
 		Thread:    thread,
@@ -201,6 +252,12 @@ func (d *DiscordConnector) acceptsChannel(channel string) bool {
 
 	_, ok := d.channels[channel]
 	return ok
+}
+
+func (d *DiscordConnector) Identity() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.selfUser
 }
 
 func (d *DiscordConnector) isSelfMessage(message *discordgo.MessageCreate) bool {

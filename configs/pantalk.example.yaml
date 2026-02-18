@@ -1,45 +1,38 @@
 server:
-  socket_path: /tmp/pantalk.sock
-  db_path: /tmp/pantalk.db
+  # socket_path: defaults to $XDG_RUNTIME_DIR/pantalk.sock (or /tmp/pantalk-<uid>.sock)
+  # db_path: defaults to ~/.local/share/pantalk/pantalk.db
   notification_history_size: 1000
 
-services:
-  - name: slack
-    bots:
-      - name: team-a
-        bot_id: slack-bot-team-a
-        bot_token: $SLACK_BOT_TOKEN_TEAM_A
-        app_level_token: $SLACK_APP_LEVEL_TOKEN_TEAM_A
-        channels:
-          - C0123456789
-      - name: team-b
-        bot_id: slack-bot-team-b
-        bot_token: $SLACK_BOT_TOKEN_TEAM_B
-        app_level_token: $SLACK_APP_LEVEL_TOKEN_TEAM_B
-        channels:
-          - C1123456789
+bots:
+  - name: ops-bot
+    type: slack
+    bot_token: $SLACK_BOT_TOKEN_OPS
+    app_level_token: $SLACK_APP_LEVEL_TOKEN_OPS
+    channels:
+      - C0123456789
 
-  - name: discord
-    bots:
-      - name: ops-bot
-        bot_id: discord-ops-bot
-        bot_token: $DISCORD_BOT_TOKEN_OPS
-        channels:
-          - '123456789012345678'
+  - name: eng-bot
+    type: slack
+    bot_token: $SLACK_BOT_TOKEN_ENG
+    app_level_token: $SLACK_APP_LEVEL_TOKEN_ENG
+    channels:
+      - C1123456789
 
-  - name: mattermost
+  - name: discord-bot
+    type: discord
+    bot_token: $DISCORD_BOT_TOKEN_OPS
+    channels:
+      - '123456789012345678'
+
+  - name: support-bot
+    type: mattermost
+    bot_token: $MATTERMOST_BOT_TOKEN_SUPPORT
     endpoint: https://mattermost.example.com
-    bots:
-      - name: support-bot
-        bot_id: mattermost-support-bot
-        bot_token: $MATTERMOST_BOT_TOKEN_SUPPORT
-        channels:
-          - a1b2c3d4e5f6g7h8i9j0k
+    channels:
+      - a1b2c3d4e5f6g7h8i9j0k
 
-  - name: telegram
-    bots:
-      - name: alerts-bot
-        bot_id: telegram-alerts-bot
-        bot_token: $TELEGRAM_BOT_TOKEN_ALERTS
-        channels:
-          - '-1001234567890'
+  - name: alerts-bot
+    type: telegram
+    bot_token: $TELEGRAM_BOT_TOKEN_ALERTS
+    channels:
+      - '-1001234567890'

@@ -10,15 +10,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	defaultSocketPath = "/tmp/pantalk.sock"
-	defaultHistory    = 500
-	defaultPantalkDB  = "/tmp/pantalk.db"
-)
+const defaultHistory = 500
 
 type Config struct {
-	Server   ServerConfig    `yaml:"server"`
-	Services []ServiceConfig `yaml:"services"`
+	Server ServerConfig `yaml:"server"`
+	Bots   []BotConfig  `yaml:"bots"`
 }
 
 type ServerConfig struct {
@@ -27,18 +23,14 @@ type ServerConfig struct {
 	DBPath      string `yaml:"db_path"`
 }
 
-type ServiceConfig struct {
-	Name      string      `yaml:"name"`
-	Transport string      `yaml:"transport"`
-	Endpoint  string      `yaml:"endpoint"`
-	Bots      []BotConfig `yaml:"bots"`
-}
-
 type BotConfig struct {
 	Name          string   `yaml:"name"`
-	BotID         string   `yaml:"bot_id"`
+	Type          string   `yaml:"type"`
+	DisplayName   string   `yaml:"display_name"`
 	BotToken      string   `yaml:"bot_token"`
 	AppLevelToken string   `yaml:"app_level_token"`
+	Transport     string   `yaml:"transport"`
+	Endpoint      string   `yaml:"endpoint"`
 	Channels      []string `yaml:"channels"`
 }
 
@@ -91,7 +83,7 @@ func Load(path string) (Config, error) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.Server.SocketPath == "" {
-		cfg.Server.SocketPath = defaultSocketPath
+		cfg.Server.SocketPath = DefaultSocketPath()
 	}
 
 	if cfg.Server.HistorySize <= 0 {
@@ -99,78 +91,59 @@ func applyDefaults(cfg *Config) {
 	}
 
 	if cfg.Server.DBPath == "" {
-		cfg.Server.DBPath = defaultPantalkDB
+		cfg.Server.DBPath = DefaultDBPath()
 	}
 }
 
 func validate(cfg Config) error {
-	if len(cfg.Services) == 0 {
-		return errors.New("config must include at least one service")
+	if len(cfg.Bots) == 0 {
+		return errors.New("config must include at least one bot")
 	}
 
-	seenServices := map[string]struct{}{}
-	for _, service := range cfg.Services {
-		if service.Name == "" {
-			return errors.New("service name cannot be empty")
+	seenBots := map[string]struct{}{}
+	for _, bot := range cfg.Bots {
+		if bot.Name == "" {
+			return errors.New("bot name cannot be empty")
 		}
 
-		if service.Name != "slack" && service.Name != "discord" && service.Name != "mattermost" && service.Name != "telegram" {
-			if strings.TrimSpace(service.Transport) == "" {
-				return fmt.Errorf("service %q transport cannot be empty", service.Name)
-			}
-
-			if strings.TrimSpace(service.Endpoint) == "" {
-				return fmt.Errorf("service %q endpoint cannot be empty", service.Name)
-			}
+		if strings.TrimSpace(bot.Type) == "" {
+			return fmt.Errorf("bot %q requires type", bot.Name)
 		}
 
-		if _, exists := seenServices[service.Name]; exists {
-			return fmt.Errorf("duplicate service name: %s", service.Name)
+		if _, exists := seenBots[bot.Name]; exists {
+			return fmt.Errorf("duplicate bot name: %s", bot.Name)
 		}
-		seenServices[service.Name] = struct{}{}
+		seenBots[bot.Name] = struct{}{}
 
-		if len(service.Bots) == 0 {
-			return fmt.Errorf("service %q must include at least one bot", service.Name)
-		}
-
-		seenBots := map[string]struct{}{}
-		for _, bot := range service.Bots {
-			if bot.Name == "" {
-				return fmt.Errorf("service %q has bot with empty name", service.Name)
+		switch bot.Type {
+		case "slack":
+			if strings.TrimSpace(bot.BotToken) == "" {
+				return fmt.Errorf("bot %q requires bot_token", bot.Name)
 			}
-
-			if strings.TrimSpace(bot.BotID) == "" {
-				return fmt.Errorf("service %q bot %q requires bot_id", service.Name, bot.Name)
+			if strings.TrimSpace(bot.AppLevelToken) == "" {
+				return fmt.Errorf("bot %q requires app_level_token", bot.Name)
 			}
-
-			if _, exists := seenBots[bot.Name]; exists {
-				return fmt.Errorf("service %q has duplicate bot name %q", service.Name, bot.Name)
+		case "discord":
+			if strings.TrimSpace(bot.BotToken) == "" {
+				return fmt.Errorf("bot %q requires bot_token", bot.Name)
 			}
-			seenBots[bot.Name] = struct{}{}
-
-			switch service.Name {
-			case "slack":
-				if strings.TrimSpace(bot.BotToken) == "" {
-					return fmt.Errorf("service %q bot %q requires bot_token", service.Name, bot.Name)
-				}
-				if strings.TrimSpace(bot.AppLevelToken) == "" {
-					return fmt.Errorf("service %q bot %q requires app_level_token", service.Name, bot.Name)
-				}
-			case "discord":
-				if strings.TrimSpace(bot.BotToken) == "" {
-					return fmt.Errorf("service %q bot %q requires bot_token", service.Name, bot.Name)
-				}
-			case "mattermost":
-				if strings.TrimSpace(service.Endpoint) == "" {
-					return fmt.Errorf("service %q requires endpoint", service.Name)
-				}
-				if strings.TrimSpace(bot.BotToken) == "" {
-					return fmt.Errorf("service %q bot %q requires bot_token", service.Name, bot.Name)
-				}
-			case "telegram":
-				if strings.TrimSpace(bot.BotToken) == "" {
-					return fmt.Errorf("service %q bot %q requires bot_token", service.Name, bot.Name)
-				}
+		case "mattermost":
+			if strings.TrimSpace(bot.Endpoint) == "" {
+				return fmt.Errorf("bot %q requires endpoint", bot.Name)
+			}
+			if strings.TrimSpace(bot.BotToken) == "" {
+				return fmt.Errorf("bot %q requires bot_token", bot.Name)
+			}
+		case "telegram":
+			if strings.TrimSpace(bot.BotToken) == "" {
+				return fmt.Errorf("bot %q requires bot_token", bot.Name)
+			}
+		default:
+			if strings.TrimSpace(bot.Transport) == "" {
+				return fmt.Errorf("bot %q transport cannot be empty for custom type %q", bot.Name, bot.Type)
+			}
+			if strings.TrimSpace(bot.Endpoint) == "" {
+				return fmt.Errorf("bot %q endpoint cannot be empty for custom type %q", bot.Name, bot.Type)
 			}
 		}
 	}

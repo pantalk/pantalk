@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type NotificationFilter struct {
 	Target  string
 	Channel string
 	Thread  string
+	Search  string
 	Limit   int
 	SinceID int64
 	Unseen  bool
@@ -29,6 +32,7 @@ type EventFilter struct {
 	Target     string
 	Channel    string
 	Thread     string
+	Search     string
 	Limit      int
 	SinceID    int64
 	NotifyOnly bool
@@ -40,6 +44,12 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("create db directory: %w", err)
+		}
+	}
+
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
@@ -70,6 +80,7 @@ CREATE TABLE IF NOT EXISTS events (
 	bot TEXT NOT NULL,
 	kind TEXT NOT NULL,
 	direction TEXT NOT NULL,
+	user TEXT NOT NULL DEFAULT '',
 	target TEXT,
 	channel TEXT,
 	thread TEXT,
@@ -90,6 +101,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	bot TEXT NOT NULL,
 	kind TEXT NOT NULL,
 	direction TEXT NOT NULL,
+	user TEXT NOT NULL DEFAULT '',
 	target TEXT,
 	channel TEXT,
 	thread TEXT,
@@ -111,22 +123,49 @@ CREATE INDEX IF NOT EXISTS idx_notifications_seen ON notifications(service, bot,
 	return nil
 }
 
+// LookupChannelByThread returns the channel associated with a thread timestamp.
+// It searches the events table for any event matching the given thread value
+// and returns the first channel found.
+func (s *Store) LookupChannelByThread(service string, bot string, thread string) (string, error) {
+	query := `SELECT channel FROM events WHERE thread = ? AND channel != ''`
+	args := []any{thread}
+
+	if service != "" {
+		query += " AND service = ?"
+		args = append(args, service)
+	}
+	if bot != "" {
+		query += " AND bot = ?"
+		args = append(args, bot)
+	}
+
+	query += " LIMIT 1"
+
+	var channel string
+	err := s.db.QueryRow(query, args...).Scan(&channel)
+	if err != nil {
+		return "", err
+	}
+	return channel, nil
+}
+
 func (s *Store) InsertEvent(event protocol.Event) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	result, err := s.db.Exec(`
 INSERT INTO events (
-	timestamp_utc, service, bot, kind, direction,
+	timestamp_utc, service, bot, kind, direction, user,
 	target, channel, thread,
 	mentions_agent, direct_to_agent, notify, text
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
 		event.Service,
 		event.Bot,
 		event.Kind,
 		event.Direction,
+		event.User,
 		event.Target,
 		event.Channel,
 		event.Thread,
@@ -160,6 +199,7 @@ SELECT
 	bot,
 	kind,
 	direction,
+	user,
 	target,
 	channel,
 	thread,
@@ -198,6 +238,10 @@ FROM events`
 	}
 	if filter.NotifyOnly {
 		where = append(where, "notify = 1")
+	}
+	if filter.Search != "" {
+		where = append(where, "text LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
 	}
 
 	if len(where) > 0 {
@@ -239,10 +283,10 @@ func (s *Store) InsertNotification(event protocol.Event) (int64, error) {
 
 	result, err := s.db.Exec(`
 INSERT INTO notifications (
-	event_id, timestamp_utc, service, bot, kind, direction,
+	event_id, timestamp_utc, service, bot, kind, direction, user,
 	target, channel, thread, text,
 	mentions_agent, direct_to_agent, notify, seen
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
 `,
 		event.ID,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -250,6 +294,7 @@ INSERT INTO notifications (
 		event.Bot,
 		event.Kind,
 		event.Direction,
+		event.User,
 		event.Target,
 		event.Channel,
 		event.Thread,
@@ -284,6 +329,7 @@ SELECT
 	bot,
 	kind,
 	direction,
+	user,
 	target,
 	channel,
 	thread,
@@ -324,6 +370,10 @@ FROM notifications`
 	}
 	if filter.Unseen {
 		where = append(where, "seen = 0")
+	}
+	if filter.Search != "" {
+		where = append(where, "text LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
 	}
 
 	if len(where) > 0 {
@@ -439,6 +489,117 @@ func (s *Store) MarkSeen(filter NotificationFilter, all bool) (int64, error) {
 	return count, nil
 }
 
+func (s *Store) DeleteEvents(filter EventFilter, all bool) (int64, error) {
+	where := make([]string, 0, 8)
+	args := make([]any, 0, 8)
+
+	if filter.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, filter.Service)
+	}
+	if filter.Bot != "" {
+		where = append(where, "bot = ?")
+		args = append(args, filter.Bot)
+	}
+	if filter.Target != "" {
+		where = append(where, "target = ?")
+		args = append(args, filter.Target)
+	}
+	if filter.Channel != "" {
+		where = append(where, "channel = ?")
+		args = append(args, filter.Channel)
+	}
+	if filter.Thread != "" {
+		where = append(where, "thread = ?")
+		args = append(args, filter.Thread)
+	}
+	if filter.Search != "" {
+		where = append(where, "text LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
+	}
+
+	if !all && len(where) == 0 {
+		return 0, nil
+	}
+
+	query := "DELETE FROM events"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete events: %w", err)
+	}
+
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read affected rows: %w", err)
+	}
+
+	return count, nil
+}
+
+func (s *Store) DeleteNotifications(filter NotificationFilter, all bool) (int64, error) {
+	where := make([]string, 0, 8)
+	args := make([]any, 0, 8)
+
+	if filter.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, filter.Service)
+	}
+	if filter.Bot != "" {
+		where = append(where, "bot = ?")
+		args = append(args, filter.Bot)
+	}
+	if filter.Target != "" {
+		where = append(where, "target = ?")
+		args = append(args, filter.Target)
+	}
+	if filter.Channel != "" {
+		where = append(where, "channel = ?")
+		args = append(args, filter.Channel)
+	}
+	if filter.Thread != "" {
+		where = append(where, "thread = ?")
+		args = append(args, filter.Thread)
+	}
+	if filter.Unseen {
+		where = append(where, "seen = 0")
+	}
+	if filter.Search != "" {
+		where = append(where, "text LIKE ?")
+		args = append(args, "%"+filter.Search+"%")
+	}
+
+	if !all && len(where) == 0 {
+		return 0, nil
+	}
+
+	query := "DELETE FROM notifications"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete notifications: %w", err)
+	}
+
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read affected rows: %w", err)
+	}
+
+	return count, nil
+}
+
 func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 	var (
 		eventID        int64
@@ -448,6 +609,7 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		bot            string
 		kind           string
 		direction      string
+		user           string
 		target         sql.NullString
 		channel        sql.NullString
 		thread         sql.NullString
@@ -467,6 +629,7 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		&bot,
 		&kind,
 		&direction,
+		&user,
 		&target,
 		&channel,
 		&thread,
@@ -500,6 +663,7 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		Bot:            bot,
 		Kind:           kind,
 		Direction:      direction,
+		User:           user,
 		Target:         target.String,
 		Channel:        channel.String,
 		Thread:         thread.String,
@@ -521,6 +685,7 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		bot          string
 		kind         string
 		direction    string
+		user         string
 		target       sql.NullString
 		channel      sql.NullString
 		thread       sql.NullString
@@ -537,6 +702,7 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		&bot,
 		&kind,
 		&direction,
+		&user,
 		&target,
 		&channel,
 		&thread,
@@ -560,6 +726,7 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		Bot:       bot,
 		Kind:      kind,
 		Direction: direction,
+		User:      user,
 		Target:    target.String,
 		Channel:   channel.String,
 		Thread:    thread.String,
