@@ -7,30 +7,30 @@ Pantalk connects to Slack using **Socket Mode** (WebSocket), which means no publ
 - A Slack workspace where you have admin or app management permissions
 - Your Pantalk binaries installed (`pantalk` and `pantalkd`)
 
-## Step 1 — Create a Slack App
+## Step 1 - Create a Slack App
 
 Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** → **From scratch**.
 
 Give it a name (e.g. `Pantalk Agent`) and select your workspace.
 
-## Step 2 — Enable Socket Mode
+## Step 2 - Enable Socket Mode
 
 **Settings → Socket Mode** → toggle **ON**.
 
 This lets Pantalk receive events over a WebSocket connection instead of requiring a public HTTP endpoint.
 
-## Step 3 — Generate an App-Level Token
+## Step 3 - Generate an App-Level Token
 
 **Settings → Basic Information → App-Level Tokens** → **Generate Token**:
 
 - Give it a name (e.g. `pantalk`)
 - Add the **`connections:write`** scope
 - Click **Generate**
-- Copy the token (`xapp-...`) — this is your `app_level_token`
+- Copy the token (`xapp-...`) - this is your `app_level_token`
 
-## Step 4 — Add Bot Token Scopes
+## Step 4 - Add Bot Token Scopes
 
-**Features → OAuth & Permissions → Scopes → Bot Token Scopes** — add:
+**Features → OAuth & Permissions → Scopes → Bot Token Scopes** - add:
 
 | Scope               | Purpose                                         |
 | -------------------- | ----------------------------------------------- |
@@ -40,7 +40,7 @@ This lets Pantalk receive events over a WebSocket connection instead of requirin
 | `groups:history`     | Receive messages in private channels (optional) |
 | `im:history`         | Receive direct messages (optional)              |
 
-## Step 5 — Subscribe to Bot Events
+## Step 5 - Subscribe to Bot Events
 
 **Features → Event Subscriptions** → toggle **ON**, then under **Subscribe to bot events** add:
 
@@ -53,15 +53,15 @@ This lets Pantalk receive events over a WebSocket connection instead of requirin
 
 Click **Save Changes** at the bottom.
 
-## Step 6 — Install the App
+## Step 6 - Install the App
 
 **Features → OAuth & Permissions** → **Install to Workspace** (or **Reinstall** if you changed scopes).
 
-Copy the **Bot User OAuth Token** (`xoxb-...`) — this is your `bot_token`.
+Copy the **Bot User OAuth Token** (`xoxb-...`) - this is your `bot_token`.
 
 > **Important:** You must reinstall the app every time you change scopes or event subscriptions.
 
-## Step 7 — Invite the Bot to a Channel
+## Step 7 - Invite the Bot to a Channel
 
 The bot must be **in a channel** to receive events from it. In Slack, type:
 
@@ -69,9 +69,9 @@ The bot must be **in a channel** to receive events from it. In Slack, type:
 /invite @YourBotName
 ```
 
-Note the channel ID — you can find it in the channel details (it starts with `C`).
+Note the channel ID - you can find it in the channel details (it starts with `C`).
 
-## Step 8 — Configure Pantalk
+## Step 8 - Configure Pantalk
 
 Set your environment variables:
 
@@ -113,8 +113,8 @@ pantalk send --bot my-slack-bot --channel C0123456789 --text "Hello from Pantalk
 
 | Symptom                            | Cause                                                                       |
 | ---------------------------------- | --------------------------------------------------------------------------- |
-| `auth failed` on startup           | Invalid `bot_token` — check the `xoxb-` token is correct                    |
+| `auth failed` on startup           | Invalid `bot_token` - check the `xoxb-` token is correct                    |
 | No `socket mode connected` log     | Socket Mode is not enabled, or `app_level_token` is wrong                   |
 | Connected but no events arrive     | Missing event subscriptions (step 5) or bot not invited to channel (step 7) |
 | Events arrive but no notifications | Message doesn't @mention the bot and isn't a DM                             |
-| `warning: no events received` log  | Likely missing event subscriptions — see step 5                             |
+| `warning: no events received` log  | Likely missing event subscriptions - see step 5                             |

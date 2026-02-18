@@ -17,11 +17,11 @@
 
 ## The Problem
 
-AI agents need to communicate with humans where they already are — Slack, Discord, Mattermost, Telegram. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
 
 ## The Solution
 
-Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity — auth, sessions, reconnects, rate limits — while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
+Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity - auth, sessions, reconnects, rate limits - while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -72,18 +72,18 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
 
 | Component  | Role                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------- |
-| `pantalkd` | Local daemon — maintains persistent upstream sessions (WebSocket, Gateway, long-poll) |
-| `pantalk`  | Unified CLI — messaging, admin, and config management                                 |
+| `pantalkd` | Local daemon - maintains persistent upstream sessions (WebSocket, Gateway, long-poll) |
+| `pantalk`  | Unified CLI - messaging, admin, and config management                                 |
 
 All clients connect to `pantalkd` through a **Unix domain socket** using a simple JSON protocol. AI agents and LLM tools can send, receive, and stream chat messages without embedding any service SDK.
 
 ### Design Principles
 
-- **Agent-first** — structured output, skill definitions, and notification routing designed for AI agents
-- **One daemon, all platforms** — upstream auth/session complexity lives in `pantalkd`
-- **Composable CLI** — JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
-- **Multi-bot** — define multiple bots per service via config
-- **Local-first** — SQLite persistence, no external dependencies
+- **Agent-first** - structured output, skill definitions, and notification routing designed for AI agents
+- **One daemon, all platforms** - upstream auth/session complexity lives in `pantalkd`
+- **Composable CLI** - JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
+- **Multi-bot** - define multiple bots per service via config
+- **Local-first** - SQLite persistence, no external dependencies
 
 ## Source Layout
 
@@ -98,6 +98,7 @@ docs/
   discord-setup.md       # Discord platform setup guide
   mattermost-setup.md    # Mattermost platform setup guide
   telegram-setup.md      # Telegram platform setup guide
+  claude-code-hooks.md   # Claude Code hooks integration guide
 internal/
   client/                # Shared IPC client logic
   config/                # YAML parsing & validation
@@ -328,6 +329,14 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | Discord    | [Discord Setup](docs/discord-setup.md)       | Gateway (WebSocket)     |
 | Mattermost | [Mattermost Setup](docs/mattermost-setup.md) | WebSocket + REST API    |
 | Telegram   | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)     |
+
+---
+
+## Integrations
+
+| Integration | Guide                                          | Description                                                                                           |
+| ----------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Claude Code | [Claude Code Hooks](docs/claude-code-hooks.md) | Use pantalk as a hook to forward notifications, check chat on stop, and load context on session start |
 
 ---
 
