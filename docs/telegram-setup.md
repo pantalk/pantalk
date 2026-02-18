@@ -7,18 +7,18 @@ Pantalk connects to Telegram using the **Bot API** with long-polling (`getUpdate
 - A Telegram account
 - Your Pantalk binaries installed (`pantalk` and `pantalkd`)
 
-## Step 1 — Create a Bot via BotFather
+## Step 1 - Create a Bot via BotFather
 
 1. Open Telegram and search for **@BotFather**
 2. Send `/newbot`
 3. Follow the prompts:
    - Choose a **display name** (e.g. `Pantalk Agent`)
    - Choose a **username** (must end in `bot`, e.g. `pantalk_agent_bot`)
-4. BotFather will reply with your **bot token** — copy it
+4. BotFather will reply with your **bot token** - copy it
 
 The token looks like: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`
 
-## Step 2 — Configure Bot Settings (Optional)
+## Step 2 - Configure Bot Settings (Optional)
 
 Send these commands to **@BotFather** to customize your bot:
 
@@ -44,7 +44,7 @@ To receive **all messages** in a group, disable privacy mode:
 
 > **Note:** If the bot was already in a group before disabling privacy, you must remove and re-add it for the change to take effect.
 
-## Step 3 — Add the Bot to a Group (Optional)
+## Step 3 - Add the Bot to a Group (Optional)
 
 For group messaging:
 
@@ -54,11 +54,11 @@ For group messaging:
 
 For direct messaging, users can simply start a conversation with the bot by searching for its username.
 
-## Step 4 — Get Chat IDs
+## Step 4 - Get Chat IDs
 
 Telegram uses numeric chat IDs. To find a chat ID:
 
-**Option A — Use the bot API directly:**
+**Option A - Use the bot API directly:**
 
 1. Send a message to the bot (or in a group the bot is in)
 2. Call the API:
@@ -67,14 +67,14 @@ Telegram uses numeric chat IDs. To find a chat ID:
 curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates" | jq '.result[-1].message.chat.id'
 ```
 
-**Option B — Use @userinfobot:**
+**Option B - Use @userinfobot:**
 
 1. Forward a message from the target chat to **@userinfobot**
 2. It will reply with the chat ID
 
 > **Note:** Group chat IDs are negative numbers (e.g. `-1001234567890`). They must be quoted in YAML.
 
-## Step 5 — Configure Pantalk
+## Step 5 - Configure Pantalk
 
 Set your environment variable:
 
@@ -114,8 +114,8 @@ pantalk send --bot my-telegram-bot --channel -1001234567890 --text "Hello from P
 
 | Symptom                          | Cause                                                                        |
 | -------------------------------- | ---------------------------------------------------------------------------- |
-| `401 Unauthorized`               | Invalid bot token — regenerate via @BotFather with `/revoke` then `/newbot`  |
-| Connected but no group messages  | Privacy mode is enabled — disable it via @BotFather `/setprivacy`            |
+| `401 Unauthorized`               | Invalid bot token - regenerate via @BotFather with `/revoke` then `/newbot`  |
+| Connected but no group messages  | Privacy mode is enabled - disable it via @BotFather `/setprivacy`            |
 | Bot doesn't see DMs              | User hasn't started a conversation with the bot yet (must send `/start`)     |
-| Wrong chat ID                    | Use `getUpdates` to confirm the correct chat ID — groups use negative IDs    |
-| Messages delayed                 | Normal for long-polling — Telegram batches updates with a ~1s cycle          |
+| Wrong chat ID                    | Use `getUpdates` to confirm the correct chat ID - groups use negative IDs    |
+| Messages delayed                 | Normal for long-polling - Telegram batches updates with a ~1s cycle          |
