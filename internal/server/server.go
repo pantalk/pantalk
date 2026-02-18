@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/protocol"
-	"github.com/chatbotkit/pantalk/internal/store"
-	"github.com/chatbotkit/pantalk/internal/upstream"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/store"
+	"github.com/pantalk/pantalk/internal/upstream"
 )
 
 type Server struct {

@@ -42,7 +42,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          LDFLAGS="-s -w -X github.com/chatbotkit/pantalk/internal/version.Version=${VERSION}"
+          LDFLAGS="-s -w -X github.com/pantalk/pantalk/internal/version.Version=${VERSION}"
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
 

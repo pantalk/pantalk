@@ -1,9 +1,11 @@
 package upstream
 
 import (
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/chatbotkit/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/protocol"
 )
 
 func TestResolveSlackChannel(t *testing.T) {
@@ -124,9 +126,12 @@ func TestParseSlackTimestamp_Invalid(t *testing.T) {
 }
 
 func TestMockConnector_Send(t *testing.T) {
+	var mu sync.Mutex
 	var published []protocol.Event
 	mock := NewMockConnector("test", "bot", func(ev protocol.Event) {
+		mu.Lock()
 		published = append(published, ev)
+		mu.Unlock()
 	})
 
 	event, err := mock.Send(nil, protocol.Request{
@@ -142,7 +147,14 @@ func TestMockConnector_Send(t *testing.T) {
 	if event.Direction != "out" {
 		t.Fatalf("expected direction 'out', got %q", event.Direction)
 	}
-	if len(published) < 1 {
+
+	// Wait for the async echo event from the mock goroutine.
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	count := len(published)
+	mu.Unlock()
+	if count < 1 {
 		t.Fatal("expected at least 1 published event")
 	}
 }

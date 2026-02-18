@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chatbotkit/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/config"
 )
 
 const defaultRepo = "https://github.com/pantalk/skills.git"

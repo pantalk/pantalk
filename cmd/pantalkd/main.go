@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/chatbotkit/pantalk/internal/config"
-	"github.com/chatbotkit/pantalk/internal/server"
-	"github.com/chatbotkit/pantalk/internal/version"
+	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/server"
+	"github.com/pantalk/pantalk/internal/version"
 )
 
 func main() {
