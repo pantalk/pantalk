@@ -36,6 +36,13 @@ bots:
     bot_token: $TELEGRAM_BOT_TOKEN_ALERTS
     channels:
       - '-1001234567890'
+
+  - name: my-whatsapp
+    type: whatsapp
+    # db_path: defaults to ~/.local/share/pantalk/whatsapp-my-whatsapp.db
+    # channels:               # optional: limit to specific chats
+    #   - '1234567890@s.whatsapp.net'
+    #   - '12345678-9876543@g.us'
 # Agents are preconfigured commands that launch automatically when matching
 # events arrive. By default only known agent binaries (claude, codex, aider,
 # goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary

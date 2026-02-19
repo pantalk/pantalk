@@ -57,7 +57,7 @@ func Run(service string, toolName string, args []string) int {
 			return 1
 		}
 		return 0
-	case "setup", "validate", "reload", "config":
+	case "setup", "validate", "reload", "config", "pair":
 		if err := ctl.Run(args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -76,7 +76,7 @@ func Run(service string, toolName string, args []string) int {
 func runBots(service string, args []string) int {
 	flags := flag.NewFlagSet("bots", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
 	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -169,7 +169,7 @@ func runSend(service string, args []string) int {
 func runHistory(service string, args []string, forceNotify bool) int {
 	flags := flag.NewFlagSet("history", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
@@ -230,7 +230,7 @@ func runHistory(service string, args []string, forceNotify bool) int {
 func runSubscribe(service string, args []string) int {
 	flags := flag.NewFlagSet("stream", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram)")
+	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
@@ -463,6 +463,7 @@ Admin:
   %s setup [--output PATH] [--force]
   %s validate [--config PATH]
   %s reload [--socket PATH]
+  %s pair --bot NAME [--config PATH]
   %s config print [--config PATH]
   %s config set-server [--socket ...] [--db ...] [--history ...]
   %s config add-bot --name NAME --type TYPE [--bot-token ...] [--app-level-token ...] [--endpoint ...] [--transport ...] [--channels ...]
@@ -475,6 +476,7 @@ JSON output is enabled by default when stdout is not a terminal.
 		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,
+		toolName,
 		toolName,
 		toolName,
 		toolName,

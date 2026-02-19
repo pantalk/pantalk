@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Give your AI agent a voice on every chat platform.</strong><br/>
-  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, and Telegram through a single interface.
+  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, and WhatsApp through a single interface.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## The Problem
 
-AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
 
 ## The Solution
 
@@ -43,7 +43,7 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
                            │
          ┌─────────┬───────┼────────┬──────────┐
          ▼         ▼       ▼        ▼          ▼
-       Slack    Discord   MM    Telegram      ...
+       Slack    Discord   MM    Telegram  WhatsApp  ...
 ```
 
 ## Why Pantalk
@@ -65,6 +65,7 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
 | **Discord**    | Gateway + REST API              | ✅ Full support |
 | **Mattermost** | WebSocket + REST API            | ✅ Full support |
 | **Telegram**   | Bot API long-poll + sendMessage | ✅ Full support |
+| **WhatsApp**   | Web multi-device (whatsmeow)    | ✅ Full support |
 
 ---
 
@@ -99,6 +100,7 @@ docs/
   discord-setup.md       # Discord platform setup guide
   mattermost-setup.md    # Mattermost platform setup guide
   telegram-setup.md      # Telegram platform setup guide
+  whatsapp-setup.md      # WhatsApp platform setup guide
   claude-code-hooks.md   # Claude Code hooks integration guide
 internal/
   client/                # Shared IPC client logic
