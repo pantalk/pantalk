@@ -94,6 +94,7 @@ cmd/
 configs/
   pantalk.example.yaml   # Example configuration
 docs/
+  agents.md              # Reactive agent configuration guide
   slack-setup.md         # Slack platform setup guide
   discord-setup.md       # Discord platform setup guide
   mattermost-setup.md    # Mattermost platform setup guide
@@ -222,13 +223,14 @@ bots:
 
 ### Daemon flags
 
-| Flag        | Description                   |
-| ----------- | ----------------------------- |
-| `--config`  | Path to YAML config file      |
-| `--socket`  | Override `server.socket_path` |
-| `--db`      | Override `server.db_path`     |
-| `--debug`   | Enable verbose debug logging  |
-| `--version` | Print version and exit        |
+| Flag           | Description                                        |
+| -------------- | -------------------------------------------------- |
+| `--config`     | Path to YAML config file                           |
+| `--socket`     | Override `server.socket_path`                      |
+| `--db`         | Override `server.db_path`                          |
+| `--allow-exec` | Allow agent commands outside the default allowlist |
+| `--debug`      | Enable verbose debug logging                       |
+| `--version`    | Print version and exit                             |
 
 ### Hot reload
 
@@ -336,6 +338,7 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 | Integration | Guide                                          | Description                                                                                           |
 | ----------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Agents      | [Agents](docs/agents.md)                       | Launch AI agents automatically when matching notifications arrive                                     |
 | Claude Code | [Claude Code Hooks](docs/claude-code-hooks.md) | Use pantalk as a hook to forward notifications, check chat on stop, and load context on session start |
 
 ---

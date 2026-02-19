@@ -16,6 +16,7 @@ func main() {
 	socketPath := flag.String("socket", "", "override unix socket path (defaults to config value)")
 	databasePath := flag.String("db", "", "override pantalk sqlite database path (defaults to config value)")
 	debug := flag.Bool("debug", false, "enable verbose debug logging")
+	allowExec := flag.Bool("allow-exec", false, "allow agent commands outside the default allowlist")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -48,7 +49,7 @@ func main() {
 		*configPath = config.DefaultConfigPath()
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.LoadWithOptions(*configPath, *allowExec)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
@@ -64,6 +65,7 @@ func main() {
 
 	srv := server.New(cfg, *configPath, *socketPath, *databasePath)
 	srv.SetDebug(*debug)
+	srv.SetAllowExec(*allowExec)
 	if err := srv.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

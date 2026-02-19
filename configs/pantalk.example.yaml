@@ -36,3 +36,38 @@ bots:
     bot_token: $TELEGRAM_BOT_TOKEN_ALERTS
     channels:
       - '-1001234567890'
+# Agents are preconfigured commands that launch automatically when matching
+# events arrive. By default only known agent binaries (claude, codex, aider,
+# goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary
+# commands. The "when" field uses an expression language with boolean operators
+# (&&, ||, !) and event fields: notify, direct, mentions, channel, thread,
+# bot, service, user, text. Time-based triggers are also supported via at()
+# and every() functions. Default when is "notify".
+#
+# agents:
+#   - name: responder                     # identifier for logging
+#     when: "direct || mentions"           # expression (default: "notify")
+#     command: claude -p "Check pantalk notifications and respond"
+#     workdir: /home/user/project          # optional working directory
+#     buffer: 30                           # seconds to batch before launching
+#     timeout: 120                         # kill after N seconds
+#     cooldown: 60                         # min gap between runs
+#
+#   - name: incident-watcher
+#     when: "notify && channel == '#incidents'"
+#     command: claude -p "Triage the incident"
+#     workdir: /home/user/ops
+#     buffer: 10
+#     timeout: 300
+#     cooldown: 120
+#
+#   - name: morning-digest
+#     when: 'at("9:00") && weekday in ["mon","tue","wed","thu","fri"]'
+#     command: claude -p "Summarize overnight notifications"
+#     workdir: /home/user/project
+#     timeout: 300
+#
+#   - name: periodic-check
+#     when: 'every("30m") || direct'
+#     command: claude -p "Check notifications and respond"
+#     workdir: /home/user/project
