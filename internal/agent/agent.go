@@ -73,7 +73,7 @@ type exprEnv struct {
 	// Time functions — set to closures that capture the env's time fields.
 	// Exposed as at() and every() in expressions via expr tags.
 	AtFn    func(times ...string) (bool, error) `expr:"at"`
-	EveryFn func(interval string) (bool, error)  `expr:"every"`
+	EveryFn func(interval string) (bool, error) `expr:"every"`
 }
 
 // weekdayName converts a time.Weekday to a short lowercase name.
