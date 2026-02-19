@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pantalk/pantalk/internal/agent"
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/protocol"
 	"github.com/pantalk/pantalk/internal/store"
@@ -29,6 +30,7 @@ type Server struct {
 	socketOverride string
 	dbOverride     string
 	debug          bool
+	allowExec      bool
 
 	rootCtx       context.Context
 	runtimeCancel context.CancelFunc
@@ -39,6 +41,8 @@ type Server struct {
 	routesByBot   map[string]map[string]struct{}
 	connectors    map[string]upstream.Connector
 	notifications *store.Store
+	agents        []*agent.Runner
+	tickStop      chan struct{} // closed to stop the clock ticker
 }
 
 func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride string) *Server {
@@ -57,6 +61,11 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 // SetDebug enables verbose debug logging.
 func (s *Server) SetDebug(enabled bool) {
 	s.debug = enabled
+}
+
+// SetAllowExec permits agent commands outside the default allowlist.
+func (s *Server) SetAllowExec(enabled bool) {
+	s.allowExec = enabled
 }
 
 func (s *Server) Run() error {
@@ -158,14 +167,47 @@ func (s *Server) startConnectors(cfg config.Config) error {
 
 	runtimeCtx, runtimeCancel := context.WithCancel(s.rootCtx)
 
+	// Build agent runners from config.
+	var runners []*agent.Runner
+	for _, acfg := range cfg.Agents {
+		r, err := agent.NewRunner(agent.Config{
+			Name:     acfg.Name,
+			When:     acfg.When,
+			Command:  agent.Command(acfg.Command),
+			Workdir:  acfg.Workdir,
+			Buffer:   acfg.Buffer,
+			Timeout:  acfg.Timeout,
+			Cooldown: acfg.Cooldown,
+		})
+		if err != nil {
+			runtimeCancel()
+			return fmt.Errorf("create agent %q: %w", acfg.Name, err)
+		}
+		runners = append(runners, r)
+		log.Printf("agent %s registered", acfg.Name)
+	}
+
 	s.mu.Lock()
 	oldCancel := s.runtimeCancel
+	oldAgents := s.agents
+	oldTickStop := s.tickStop
 	s.cfg = cfg
 	s.bots = bots
 	s.connectors = connectors
 	s.routesByBot = make(map[string]map[string]struct{})
 	s.runtimeCancel = runtimeCancel
+	s.agents = runners
+	s.tickStop = nil
 	s.mu.Unlock()
+
+	// Stop old agent timers and clock ticker.
+	for _, r := range oldAgents {
+		r.Stop()
+	}
+
+	if oldTickStop != nil {
+		close(oldTickStop)
+	}
 
 	if oldCancel != nil {
 		oldCancel()
@@ -176,7 +218,72 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		go connector.Run(runtimeCtx)
 	}
 
+	// Start the 1-minute clock ticker if any agent uses time expressions.
+	needsTick := false
+	for _, r := range runners {
+		if r.NeedsTick() {
+			needsTick = true
+			break
+		}
+	}
+	if needsTick {
+		stop := make(chan struct{})
+		s.mu.Lock()
+		s.tickStop = stop
+		s.mu.Unlock()
+		go s.runClockTicker(stop)
+		log.Printf("clock ticker started (1-minute interval)")
+	}
+
 	return nil
+}
+
+// runClockTicker sends a synthetic tick event to all agent runners every
+// minute, aligned to the top of each minute. This enables time-based
+// expressions like at("9:00") and every("15m").
+func (s *Server) runClockTicker(stop chan struct{}) {
+	// Align to the next minute boundary so ticks fire at :00 seconds.
+	now := time.Now()
+	next := now.Truncate(time.Minute).Add(time.Minute)
+	alignTimer := time.NewTimer(time.Until(next))
+
+	select {
+	case <-alignTimer.C:
+	case <-stop:
+		alignTimer.Stop()
+		return
+	}
+
+	// Fire immediately at the first aligned minute.
+	s.dispatchTick()
+
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.dispatchTick()
+		case <-stop:
+			return
+		}
+	}
+}
+
+// dispatchTick generates a synthetic tick event and dispatches it to all
+// agent runners that match.
+func (s *Server) dispatchTick() {
+	tick := agent.TickEvent()
+
+	s.mu.RLock()
+	runners := s.agents
+	s.mu.RUnlock()
+
+	for _, runner := range runners {
+		if runner.Matches(tick) {
+			runner.Handle(tick)
+		}
+	}
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
@@ -464,6 +571,17 @@ func (s *Server) publish(event protocol.Event) {
 		}
 	}
 
+	// Dispatch to agent runners before taking the write lock.
+	s.mu.RLock()
+	agents := s.agents
+	s.mu.RUnlock()
+
+	for _, runner := range agents {
+		if runner.Matches(event) {
+			runner.Handle(event)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -481,7 +599,7 @@ func (s *Server) reloadConfig() error {
 		return errors.New("reload requires daemon --config path")
 	}
 
-	cfg, err := config.Load(s.cfgPath)
+	cfg, err := config.LoadWithOptions(s.cfgPath, s.allowExec)
 	if err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}

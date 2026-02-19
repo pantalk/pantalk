@@ -5,16 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/pantalk/pantalk/internal/agent"
 	"gopkg.in/yaml.v3"
 )
 
 const defaultHistory = 500
 
 type Config struct {
-	Server ServerConfig `yaml:"server"`
-	Bots   []BotConfig  `yaml:"bots"`
+	Server ServerConfig  `yaml:"server"`
+	Bots   []BotConfig   `yaml:"bots"`
+	Agents []AgentConfig `yaml:"agents"`
 }
 
 type ServerConfig struct {
@@ -32,6 +35,19 @@ type BotConfig struct {
 	Transport     string   `yaml:"transport"`
 	Endpoint      string   `yaml:"endpoint"`
 	Channels      []string `yaml:"channels"`
+}
+
+// AgentConfig describes a preconfigured command that pantalkd can launch when
+// matching notifications arrive. Commands are exec'd directly (no shell) so
+// only explicitly listed programs can run unless --allow-exec is set.
+type AgentConfig struct {
+	Name     string        `yaml:"name"`
+	When     string        `yaml:"when"`     // expr expression evaluated against each event (default: "notify")
+	Command  agent.Command `yaml:"command"`  // string or []string — exec'd directly, never via shell
+	Workdir  string        `yaml:"workdir"`  // working directory (optional)
+	Buffer   int           `yaml:"buffer"`   // seconds to batch events before launching (default 30)
+	Timeout  int           `yaml:"timeout"`  // max runtime in seconds (default 120)
+	Cooldown int           `yaml:"cooldown"` // min seconds between consecutive runs (default 60)
 }
 
 func ResolveCredential(value string) (string, error) {
@@ -61,6 +77,12 @@ func ResolveCredential(value string) (string, error) {
 }
 
 func Load(path string) (Config, error) {
+	return LoadWithOptions(path, false)
+}
+
+// LoadWithOptions loads and validates the config. When allowExec is false,
+// agent commands are restricted to the known allowlist.
+func LoadWithOptions(path string, allowExec bool) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
@@ -74,7 +96,7 @@ func Load(path string) (Config, error) {
 	}
 
 	applyDefaults(&cfg)
-	if err := validate(cfg); err != nil {
+	if err := validate(cfg, allowExec); err != nil {
 		return Config{}, err
 	}
 
@@ -95,7 +117,7 @@ func applyDefaults(cfg *Config) {
 	}
 }
 
-func validate(cfg Config) error {
+func validate(cfg Config, allowExec bool) error {
 	if len(cfg.Bots) == 0 {
 		return errors.New("config must include at least one bot")
 	}
@@ -145,6 +167,28 @@ func validate(cfg Config) error {
 			if strings.TrimSpace(bot.Endpoint) == "" {
 				return fmt.Errorf("bot %q endpoint cannot be empty for custom type %q", bot.Name, bot.Type)
 			}
+		}
+	}
+
+	// Validate agents.
+	seenAgents := map[string]struct{}{}
+	for _, a := range cfg.Agents {
+		if strings.TrimSpace(a.Name) == "" {
+			return errors.New("agent name cannot be empty")
+		}
+		if _, exists := seenAgents[a.Name]; exists {
+			return fmt.Errorf("duplicate agent name: %s", a.Name)
+		}
+		seenAgents[a.Name] = struct{}{}
+
+		if len(a.Command) == 0 {
+			return fmt.Errorf("agent %q requires command", a.Name)
+		}
+
+		// Restrict command binaries to the known allowlist unless --allow-exec.
+		binary := filepath.Base(a.Command[0])
+		if !allowExec && !agent.AllowedCommands[binary] {
+			return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
 		}
 	}
 
