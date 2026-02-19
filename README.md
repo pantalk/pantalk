@@ -270,6 +270,7 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 | Discord    | Gateway           | REST API      |
 | Mattermost | WebSocket         | REST API      |
 | Telegram   | Bot API long-poll | `sendMessage` |
+| WhatsApp   | Web multi-device  | `SendMessage` |
 
 ### Persistence
 
@@ -333,6 +334,7 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | Discord    | [Discord Setup](docs/discord-setup.md)       | Gateway (WebSocket)     |
 | Mattermost | [Mattermost Setup](docs/mattermost-setup.md) | WebSocket + REST API    |
 | Telegram   | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)     |
+| WhatsApp   | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device        |
 
 ---
 
