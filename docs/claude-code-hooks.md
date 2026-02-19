@@ -1,6 +1,6 @@
 # Using Pantalk as a Claude Code Hook
 
-This guide shows how to connect Claude Code's [hooks system](https://code.claude.com/docs/en/hooks) to Pantalk, so Claude Code can send and receive messages on Slack, Discord, Mattermost, and Telegram automatically.
+This guide shows how to connect Claude Code's [hooks system](https://code.claude.com/docs/en/hooks) to Pantalk, so Claude Code can send and receive messages on Slack, Discord, Mattermost, Telegram, and WhatsApp automatically.
 
 ## What This Enables
 

@@ -34,6 +34,7 @@ type BotConfig struct {
 	AppLevelToken string   `yaml:"app_level_token"`
 	Transport     string   `yaml:"transport"`
 	Endpoint      string   `yaml:"endpoint"`
+	DBPath        string   `yaml:"db_path"`
 	Channels      []string `yaml:"channels"`
 }
 
@@ -160,6 +161,10 @@ func validate(cfg Config, allowExec bool) error {
 			if strings.TrimSpace(bot.BotToken) == "" {
 				return fmt.Errorf("bot %q requires bot_token", bot.Name)
 			}
+		case "whatsapp":
+			// No credentials required — authentication is handled via QR code
+			// pairing at first startup. The optional endpoint field overrides
+			// the default whatsmeow database path.
 		default:
 			if strings.TrimSpace(bot.Transport) == "" {
 				return fmt.Errorf("bot %q transport cannot be empty for custom type %q", bot.Name, bot.Type)

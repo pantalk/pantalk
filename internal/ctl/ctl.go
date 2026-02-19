@@ -40,6 +40,8 @@ func Run(args []string) error {
 		return runReload(subArgs)
 	case "config":
 		return runConfig(subArgs)
+	case "pair":
+		return runPair(subArgs)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -217,7 +219,7 @@ func runConfigAddBot(args []string) error {
 	flags := flag.NewFlagSet("config add-bot", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "config path")
 	name := flags.String("name", "", "bot name")
-	botType := flags.String("type", "", "bot type (slack, discord, mattermost, telegram)")
+	botType := flags.String("type", "", "bot type (slack, discord, mattermost, telegram, whatsapp)")
 	botToken := flags.String("bot-token", "", "bot_token (literal or $ENV_VAR)")
 	appLevelToken := flags.String("app-level-token", "", "app_level_token (slack only)")
 	transport := flags.String("transport", "", "custom transport (for non-built-in types)")
@@ -655,9 +657,10 @@ Usage:
   pantalk setup [--output %s] [--force]
   pantalk validate [--config %s]
   pantalk reload [--socket %s]
+  pantalk pair --bot NAME [--config %s]
   pantalk config <subcommand> [options]
   pantalk help
-`, defaultConfigPath, defaultConfigPath, defaultSocketPath)
+`, defaultConfigPath, defaultConfigPath, defaultSocketPath, defaultConfigPath)
 }
 
 func printConfigUsage() {
