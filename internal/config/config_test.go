@@ -823,3 +823,58 @@ bots:
 		t.Fatal("expected error for invalid YAML")
 	}
 }
+
+// --- IRC config tests ---
+
+func TestLoad_IRCWithEndpoint(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: irc-bot
+    type: irc
+    endpoint: irc.libera.chat:6697
+    channels:
+      - '#general'
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Bots) != 1 {
+		t.Fatalf("expected 1 bot, got %d", len(cfg.Bots))
+	}
+	if cfg.Bots[0].Type != "irc" {
+		t.Fatalf("expected type 'irc', got %q", cfg.Bots[0].Type)
+	}
+}
+
+func TestLoad_IRCMissingEndpoint(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: irc-bot
+    type: irc
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for irc bot missing endpoint")
+	}
+	if !strings.Contains(err.Error(), "endpoint") {
+		t.Errorf("error should mention endpoint, got: %v", err)
+	}
+}
+
+func TestLoad_IRCWithOptionalPassword(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: irc-bot
+    type: irc
+    endpoint: irc.libera.chat:6697
+    password: server-password
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Bots[0].Password != "server-password" {
+		t.Fatalf("expected password to be preserved, got %q", cfg.Bots[0].Password)
+	}
+}

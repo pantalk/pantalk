@@ -34,6 +34,7 @@ type BotConfig struct {
 	AppLevelToken string   `yaml:"app_level_token"`
 	Transport     string   `yaml:"transport"`
 	Endpoint      string   `yaml:"endpoint"`
+	Password      string   `yaml:"password"`
 	DBPath        string   `yaml:"db_path"`
 	Channels      []string `yaml:"channels"`
 }
@@ -165,6 +166,10 @@ func validate(cfg Config, allowExec bool) error {
 			// No credentials required — authentication is handled via QR code
 			// pairing at first startup. The optional endpoint field overrides
 			// the default whatsmeow database path.
+		case "irc":
+			if strings.TrimSpace(bot.Endpoint) == "" {
+				return fmt.Errorf("bot %q requires endpoint for irc (e.g. irc.libera.chat:6697)", bot.Name)
+			}
 		default:
 			if strings.TrimSpace(bot.Transport) == "" {
 				return fmt.Errorf("bot %q transport cannot be empty for custom type %q", bot.Name, bot.Type)

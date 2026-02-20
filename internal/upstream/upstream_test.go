@@ -387,6 +387,146 @@ func TestExtractWhatsAppText(t *testing.T) {
 	}
 }
 
+// --- IRC tests ---
+
+func TestResolveIRCChannel(t *testing.T) {
+	tests := []struct {
+		name    string
+		request protocol.Request
+		want    string
+	}{
+		{"direct channel with hash", protocol.Request{Channel: "#general"}, "#general"},
+		{"direct channel without hash", protocol.Request{Channel: "general"}, "#general"},
+		{"ampersand channel", protocol.Request{Channel: "&local"}, "&local"},
+		{"target with channel prefix", protocol.Request{Target: "channel:#test"}, "#test"},
+		{"target with irc:channel prefix", protocol.Request{Target: "irc:channel:test"}, "#test"},
+		{"target with irc prefix", protocol.Request{Target: "irc:#chat"}, "#chat"},
+		{"target dm prefix", protocol.Request{Target: "dm:user1"}, "user1"},
+		{"target irc:dm prefix", protocol.Request{Target: "irc:dm:user1"}, "user1"},
+		{"bare target", protocol.Request{Target: "#mychan"}, "#mychan"},
+		{"channel takes precedence", protocol.Request{Channel: "#a", Target: "#b"}, "#a"},
+		{"empty", protocol.Request{}, ""},
+		{"whitespace target", protocol.Request{Target: "  "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveIRCChannel(tt.request)
+			if got != tt.want {
+				t.Errorf("resolveIRCChannel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseIRCMessage(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantPrefix string
+		wantCmd    string
+		wantParams []string
+	}{
+		{
+			"PING",
+			"PING :server.example.com",
+			"",
+			"PING",
+			[]string{"server.example.com"},
+		},
+		{
+			"PRIVMSG",
+			":nick!user@host PRIVMSG #channel :hello world",
+			"nick!user@host",
+			"PRIVMSG",
+			[]string{"#channel", "hello world"},
+		},
+		{
+			"welcome",
+			":server 001 bot :Welcome to the IRC Network",
+			"server",
+			"001",
+			[]string{"bot", "Welcome to the IRC Network"},
+		},
+		{
+			"JOIN",
+			":bot!bot@host JOIN :#channel",
+			"bot!bot@host",
+			"JOIN",
+			[]string{"#channel"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefix, cmd, params := parseIRCMessage(tt.line)
+			if prefix != tt.wantPrefix {
+				t.Errorf("prefix = %q, want %q", prefix, tt.wantPrefix)
+			}
+			if cmd != tt.wantCmd {
+				t.Errorf("command = %q, want %q", cmd, tt.wantCmd)
+			}
+			if len(params) != len(tt.wantParams) {
+				t.Errorf("params = %v, want %v", params, tt.wantParams)
+			} else {
+				for i := range params {
+					if params[i] != tt.wantParams[i] {
+						t.Errorf("params[%d] = %q, want %q", i, params[i], tt.wantParams[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExtractNick(t *testing.T) {
+	tests := []struct {
+		prefix string
+		want   string
+	}{
+		{"nick!user@host", "nick"},
+		{"nick", "nick"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := extractNick(tt.prefix)
+		if got != tt.want {
+			t.Errorf("extractNick(%q) = %q, want %q", tt.prefix, got, tt.want)
+		}
+	}
+}
+
+func TestIRCAcceptsChannel(t *testing.T) {
+	t.Run("empty allowlist accepts all", func(t *testing.T) {
+		c := &IRCConnector{channels: map[string]struct{}{}}
+		if !c.acceptsChannel("#anything") {
+			t.Error("expected empty allowlist to accept any channel")
+		}
+	})
+
+	t.Run("allowlist filters", func(t *testing.T) {
+		c := &IRCConnector{channels: map[string]struct{}{
+			"#general": {},
+		}}
+		if !c.acceptsChannel("#general") {
+			t.Error("expected allowed channel to be accepted")
+		}
+		if c.acceptsChannel("#random") {
+			t.Error("expected unlisted channel to be rejected")
+		}
+	})
+
+	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
+		c := &IRCConnector{channels: map[string]struct{}{
+			"#general": {},
+		}}
+		c.rememberChannel("#random")
+		if !c.acceptsChannel("#random") {
+			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}
+
 func TestWhatsAppAcceptsChannel(t *testing.T) {
 	t.Run("empty allowlist accepts all", func(t *testing.T) {
 		c := &WhatsAppConnector{channels: map[string]struct{}{}}
@@ -413,65 +553,6 @@ func TestWhatsAppAcceptsChannel(t *testing.T) {
 		}}
 		c.rememberChannel("5678@s.whatsapp.net")
 		if !c.acceptsChannel("5678@s.whatsapp.net") {
-			t.Error("expected remembered channel to be accepted")
-		}
-	})
-}
-
-// --- Matrix tests ---
-
-func TestResolveMatrixRoom(t *testing.T) {
-	tests := []struct {
-		name    string
-		request protocol.Request
-		want    string
-	}{
-		{"direct channel", protocol.Request{Channel: "!abc:matrix.org"}, "!abc:matrix.org"},
-		{"target with room prefix", protocol.Request{Target: "room:!def:example.com"}, "!def:example.com"},
-		{"target with matrix:room prefix", protocol.Request{Target: "matrix:room:!ghi:host"}, "!ghi:host"},
-		{"target with matrix prefix", protocol.Request{Target: "matrix:!jkl:host"}, "!jkl:host"},
-		{"bare target", protocol.Request{Target: "!mno:host"}, "!mno:host"},
-		{"channel takes precedence", protocol.Request{Channel: "!aaa:host", Target: "!bbb:host"}, "!aaa:host"},
-		{"empty", protocol.Request{}, ""},
-		{"whitespace target", protocol.Request{Target: "  "}, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := resolveMatrixRoom(tt.request)
-			if got != tt.want {
-				t.Errorf("resolveMatrixRoom() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestMatrixAcceptsChannel(t *testing.T) {
-	t.Run("empty allowlist accepts all", func(t *testing.T) {
-		c := &MatrixConnector{channels: map[string]struct{}{}}
-		if !c.acceptsChannel("!any:host") {
-			t.Error("expected empty allowlist to accept any channel")
-		}
-	})
-
-	t.Run("allowlist filters", func(t *testing.T) {
-		c := &MatrixConnector{channels: map[string]struct{}{
-			"!abc:matrix.org": {},
-		}}
-		if !c.acceptsChannel("!abc:matrix.org") {
-			t.Error("expected allowed channel to be accepted")
-		}
-		if c.acceptsChannel("!xyz:matrix.org") {
-			t.Error("expected unlisted channel to be rejected")
-		}
-	})
-
-	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
-		c := &MatrixConnector{channels: map[string]struct{}{
-			"!abc:matrix.org": {},
-		}}
-		c.rememberChannel("!def:matrix.org")
-		if !c.acceptsChannel("!def:matrix.org") {
 			t.Error("expected remembered channel to be accepted")
 		}
 	})
