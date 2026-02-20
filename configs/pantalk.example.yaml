@@ -44,12 +44,12 @@ bots:
     #   - '1234567890@s.whatsapp.net'
     #   - '12345678-9876543@g.us'
 
-  - name: matrix-bot
-    type: matrix
-    bot_token: $MATRIX_ACCESS_TOKEN
-    endpoint: https://matrix.example.com
+  - name: irc-bot
+    type: irc
+    endpoint: irc.libera.chat:6697
+    # password: $IRC_SERVER_PASSWORD      # optional: server password
     channels:
-      - '!abc123opaque:matrix.org'
+      - '#mychannel'
 # Agents are preconfigured commands that launch automatically when matching
 # events arrive. By default only known agent binaries (claude, codex, aider,
 # goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary
