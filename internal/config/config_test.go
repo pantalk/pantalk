@@ -878,3 +878,151 @@ bots:
 		t.Fatalf("expected password to be preserved, got %q", cfg.Bots[0].Password)
 	}
 }
+
+// --- Twilio validation tests ---
+
+func TestLoad_TwilioValidConfig(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: sms-bot
+    type: twilio
+    auth_token: auth-token
+    account_sid: AC1234567890
+    phone_number: "+15551234567"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Bots) != 1 {
+		t.Fatalf("expected 1 bot, got %d", len(cfg.Bots))
+	}
+	if cfg.Bots[0].Type != "twilio" {
+		t.Fatalf("expected type twilio, got %s", cfg.Bots[0].Type)
+	}
+}
+
+func TestLoad_TwilioMissingAuthToken(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: sms-bot
+    type: twilio
+    account_sid: AC1234567890
+    phone_number: "+15551234567"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for twilio bot missing auth_token")
+	}
+	if !strings.Contains(err.Error(), "auth_token") {
+		t.Errorf("error should mention auth_token, got: %v", err)
+	}
+}
+
+func TestLoad_TwilioMissingAccountSID(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: sms-bot
+    type: twilio
+    auth_token: auth-token
+    phone_number: "+15551234567"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for twilio bot missing account_sid")
+	}
+	if !strings.Contains(err.Error(), "account_sid") {
+		t.Errorf("error should mention account_sid, got: %v", err)
+	}
+}
+
+func TestLoad_TwilioMissingPhoneNumber(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: sms-bot
+    type: twilio
+    auth_token: auth-token
+    account_sid: AC1234567890
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for twilio bot missing phone_number")
+	}
+	if !strings.Contains(err.Error(), "phone_number") {
+		t.Errorf("error should mention phone_number, got: %v", err)
+	}
+}
+
+// --- Zulip config tests ---
+
+func TestLoad_ZulipValid(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: zulip-bot
+    type: zulip
+    api_key: api-key-123
+    bot_email: bot@example.com
+    endpoint: https://chat.example.com
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Bots) != 1 {
+		t.Fatalf("expected 1 bot, got %d", len(cfg.Bots))
+	}
+	if cfg.Bots[0].Endpoint != "https://chat.example.com" {
+		t.Fatalf("unexpected endpoint: %s", cfg.Bots[0].Endpoint)
+	}
+}
+
+func TestLoad_ZulipMissingEndpoint(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: zulip-bot
+    type: zulip
+    api_key: api-key-123
+    bot_email: bot@example.com
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for zulip bot missing endpoint")
+	}
+	if !strings.Contains(err.Error(), "endpoint") {
+		t.Errorf("error should mention endpoint, got: %v", err)
+	}
+}
+
+func TestLoad_ZulipMissingAPIKey(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: zulip-bot
+    type: zulip
+    bot_email: bot@example.com
+    endpoint: https://chat.example.com
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for zulip bot missing api_key")
+	}
+	if !strings.Contains(err.Error(), "api_key") {
+		t.Errorf("error should mention api_key, got: %v", err)
+	}
+}
+
+func TestLoad_ZulipMissingBotEmail(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: zulip-bot
+    type: zulip
+    api_key: api-key-123
+    endpoint: https://chat.example.com
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for zulip bot missing bot_email")
+	}
+	if !strings.Contains(err.Error(), "bot_email") {
+		t.Errorf("error should mention bot_email, got: %v", err)
+	}
+}

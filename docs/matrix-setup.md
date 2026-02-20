@@ -69,7 +69,7 @@ Add the bot to your Pantalk config:
 bots:
   - name: my-matrix-bot
     type: matrix
-    bot_token: $MATRIX_ACCESS_TOKEN
+    access_token: $MATRIX_ACCESS_TOKEN
     endpoint: https://matrix.example.com    # your homeserver URL
     channels:
       - '!abc123:matrix.org'                # replace with your room ID
@@ -80,7 +80,7 @@ bots:
 | Field      | Purpose                                                    | Required |
 | ---------- | ---------------------------------------------------------- | -------- |
 | `type`     | Must be `matrix`                                           | Yes      |
-| `bot_token`| Access token (supports `$ENV_VAR` syntax)                  | Yes      |
+| `access_token`| Access token (supports `$ENV_VAR` syntax)                  | Yes      |
 | `endpoint` | Homeserver URL (e.g. `https://matrix.org`)                 | Yes      |
 | `channels` | Allowlist of room IDs to listen to (empty = all rooms)     | No       |
 

@@ -34,9 +34,9 @@ type MatrixConnector struct {
 }
 
 func NewMatrixConnector(bot config.BotConfig, publish func(protocol.Event)) (*MatrixConnector, error) {
-	token, err := config.ResolveCredential(bot.BotToken)
+	token, err := config.ResolveCredential(bot.AccessToken)
 	if err != nil {
-		return nil, fmt.Errorf("resolve matrix bot_token for bot %q: %w", bot.Name, err)
+		return nil, fmt.Errorf("resolve matrix access_token for bot %q: %w", bot.Name, err)
 	}
 
 	homeserver := strings.TrimSpace(bot.Endpoint)

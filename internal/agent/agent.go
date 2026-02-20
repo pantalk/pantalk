@@ -413,6 +413,12 @@ func (r *Runner) Stop() {
 	}
 }
 
+// Name returns the agent's configured name.
+func (r *Runner) Name() string { return r.cfg.Name }
+
+// When returns the agent's "when" expression string.
+func (r *Runner) When() string { return r.cfg.When }
+
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s

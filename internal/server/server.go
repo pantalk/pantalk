@@ -32,6 +32,8 @@ type Server struct {
 	debug          bool
 	allowExec      bool
 
+	startedAt time.Time
+
 	rootCtx       context.Context
 	runtimeCancel context.CancelFunc
 
@@ -72,6 +74,7 @@ func (s *Server) Run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	s.rootCtx = ctx
+	s.startedAt = time.Now()
 
 	log.Printf("opening database at %s", s.cfg.Server.DBPath)
 
@@ -371,6 +374,8 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 	switch req.Action {
 	case protocol.ActionPing:
 		return protocol.Response{OK: true, Ack: "pong"}
+	case protocol.ActionStatus:
+		return protocol.Response{OK: true, Status: s.daemonStatus()}
 	case protocol.ActionBots:
 		if s.debug {
 			log.Printf("debug: request action=%s service=%q bot=%q", req.Action, req.Service, req.Bot)
@@ -457,6 +462,52 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 		return protocol.Response{OK: true, Ack: "reloaded config and services"}
 	default:
 		return protocol.Response{OK: false, Error: fmt.Sprintf("unsupported action: %s", req.Action)}
+	}
+}
+
+// daemonStatus returns a snapshot of the daemon's current runtime state.
+func (s *Server) daemonStatus() *protocol.DaemonStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	bots := make([]protocol.BotStatus, 0, len(s.bots))
+	for _, bot := range s.bots {
+		bots = append(bots, protocol.BotStatus{
+			Name:        bot.Name,
+			Service:     bot.Service,
+			DisplayName: bot.DisplayName,
+		})
+	}
+	sort.Slice(bots, func(i, j int) bool {
+		if bots[i].Service == bots[j].Service {
+			return bots[i].Name < bots[j].Name
+		}
+		return bots[i].Service < bots[j].Service
+	})
+
+	agents := make([]protocol.AgentInfo, 0, len(s.agents))
+	for _, r := range s.agents {
+		when := r.When()
+		if when == "" {
+			when = "notify"
+		}
+		agents = append(agents, protocol.AgentInfo{
+			Name: r.Name(),
+			When: when,
+		})
+	}
+
+	now := time.Now()
+	uptime := int64(0)
+	if !s.startedAt.IsZero() {
+		uptime = int64(now.Sub(s.startedAt).Seconds())
+	}
+
+	return &protocol.DaemonStatus{
+		StartedAt: s.startedAt,
+		UptimeSec: uptime,
+		Bots:      bots,
+		Agents:    agents,
 	}
 }
 

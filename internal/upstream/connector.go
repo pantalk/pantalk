@@ -30,6 +30,10 @@ func NewConnector(bot config.BotConfig, publish func(protocol.Event)) (Connector
 		return NewIRCConnector(bot, publish)
 	case "matrix":
 		return NewMatrixConnector(bot, publish)
+	case "twilio":
+		return NewTwilioConnector(bot, publish)
+	case "zulip":
+		return NewZulipConnector(bot, publish)
 	default:
 		if bot.Transport == "" {
 			return nil, fmt.Errorf("bot %q requires either supported type or transport", bot.Name)
