@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/protocol"
 )
 
@@ -783,11 +787,11 @@ func TestIsSlackChannelID(t *testing.T) {
 		// Edge cases
 		{"", false},
 		{"C", false},
-		{"C01234", false},       // too short
-		{"c0123456789", false},  // lowercase prefix
-		{"X0123456789", false},  // wrong prefix letter
-		{"C0123456 89", false},  // space inside
-		{"C012345678a", false},  // lowercase letter
+		{"C01234", false},      // too short
+		{"c0123456789", false}, // lowercase prefix
+		{"X0123456789", false}, // wrong prefix letter
+		{"C0123456 89", false}, // space inside
+		{"C012345678a", false}, // lowercase letter
 	}
 
 	for _, tt := range tests {
@@ -810,9 +814,9 @@ func TestIsDiscordChannelID(t *testing.T) {
 		want  bool
 	}{
 		// Valid Discord snowflakes
-		{"12345678901234567", true},   // 17 digits
-		{"123456789012345678", true},  // 18 digits
-		{"1234567890123456789", true}, // 19 digits
+		{"12345678901234567", true},    // 17 digits
+		{"123456789012345678", true},   // 18 digits
+		{"1234567890123456789", true},  // 19 digits
 		{"12345678901234567890", true}, // 20 digits
 
 		// Friendly names
@@ -823,10 +827,10 @@ func TestIsDiscordChannelID(t *testing.T) {
 
 		// Edge cases
 		{"", false},
-		{"1234567890123456", false},    // 16 digits - too short
+		{"1234567890123456", false},      // 16 digits - too short
 		{"123456789012345678901", false}, // 21 digits - too long
-		{"1234567890123456a", false},    // letter in digits
-		{"12345678901234567 ", false},   // trailing space
+		{"1234567890123456a", false},     // letter in digits
+		{"12345678901234567 ", false},    // trailing space
 	}
 
 	for _, tt := range tests {
@@ -861,10 +865,10 @@ func TestIsMattermostChannelID(t *testing.T) {
 
 		// Edge cases
 		{"", false},
-		{"a1b2c3d4e5f6g7h8i9j0klmno", false},  // 25 chars - too short
+		{"a1b2c3d4e5f6g7h8i9j0klmno", false},   // 25 chars - too short
 		{"a1b2c3d4e5f6g7h8i9j0klmnopq", false}, // 27 chars - too long
 		{"A1B2C3D4E5F6G7H8I9J0KLMNOP", false},  // uppercase
-		{"a1b2c3d4e5f6g7h8i9j0klmno!", false},   // special char
+		{"a1b2c3d4e5f6g7h8i9j0klmno!", false},  // special char
 	}
 
 	for _, tt := range tests {
@@ -1199,6 +1203,342 @@ func TestZulipResolveChannelNames(t *testing.T) {
 		c.resolveChannelNames(context.Background())
 		if _, ok := c.channels["nonexistent"]; !ok {
 			t.Error("expected unresolvable name to remain as-is")
+		}
+	})
+}
+
+// --- iMessage tests ---
+
+func TestResolveIMessageChannel(t *testing.T) {
+	tests := []struct {
+		name    string
+		request protocol.Request
+		want    string
+	}{
+		{"direct channel", protocol.Request{Channel: "+15551234567"}, "+15551234567"},
+		{"target with dm prefix", protocol.Request{Target: "dm:+15553333333"}, "+15553333333"},
+		{"target with imessage:dm prefix", protocol.Request{Target: "imessage:dm:+15554444444"}, "+15554444444"},
+		{"target with chat prefix", protocol.Request{Target: "chat:+15559876543"}, "+15559876543"},
+		{"target with imessage:chat prefix", protocol.Request{Target: "imessage:chat:+15551111111"}, "+15551111111"},
+		{"target with imessage prefix", protocol.Request{Target: "imessage:+15552222222"}, "+15552222222"},
+		{"target with group prefix", protocol.Request{Target: "group:chat123456"}, "chat123456"},
+		{"target with imessage:group prefix", protocol.Request{Target: "imessage:group:chat789"}, "chat789"},
+		{"bare target", protocol.Request{Target: "user@example.com"}, "user@example.com"},
+		{"channel takes precedence", protocol.Request{Channel: "+1111", Target: "+2222"}, "+1111"},
+		{"empty", protocol.Request{}, ""},
+		{"whitespace target", protocol.Request{Target: "  "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveIMessageChannel(tt.request)
+			if got != tt.want {
+				t.Errorf("resolveIMessageChannel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIMessageAcceptsChannel(t *testing.T) {
+	t.Run("empty allowlist accepts all", func(t *testing.T) {
+		c := &IMessageConnector{channels: map[string]struct{}{}}
+		if !c.acceptsChannel("+15551234567") {
+			t.Error("expected empty allowlist to accept any channel")
+		}
+	})
+
+	t.Run("allowlist filters", func(t *testing.T) {
+		c := &IMessageConnector{channels: map[string]struct{}{
+			"+15551234567": {},
+		}}
+		if !c.acceptsChannel("+15551234567") {
+			t.Error("expected allowed channel to be accepted")
+		}
+		if c.acceptsChannel("+15559999999") {
+			t.Error("expected unlisted channel to be rejected")
+		}
+	})
+
+	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
+		c := &IMessageConnector{channels: map[string]struct{}{
+			"+15551234567": {},
+		}}
+		c.rememberChannel("+15559876543")
+		if !c.acceptsChannel("+15559876543") {
+			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}
+
+func TestIMessageHandleIncomingMessage(t *testing.T) {
+	var mu sync.Mutex
+	var published []protocol.Event
+
+	c := &IMessageConnector{
+		serviceName: "imessage",
+		botName:     "test",
+		channels:    map[string]struct{}{},
+		publish: func(ev protocol.Event) {
+			mu.Lock()
+			published = append(published, ev)
+			mu.Unlock()
+		},
+	}
+
+	t.Run("direct message", func(t *testing.T) {
+		mu.Lock()
+		published = nil
+		mu.Unlock()
+
+		c.handleIncomingMessage(chatDBRow{
+			RowID:    1,
+			GUID:     "msg-001",
+			Text:     "Hello!",
+			Date:     700000000000000000,
+			IsFromMe: 0,
+			HandleID: "+15551234567",
+			ChatID:   "+15551234567",
+		})
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(published) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(published))
+		}
+		ev := published[0]
+		if ev.Direction != "in" {
+			t.Errorf("expected direction 'in', got %q", ev.Direction)
+		}
+		if ev.User != "+15551234567" {
+			t.Errorf("expected user '+15551234567', got %q", ev.User)
+		}
+		if ev.Channel != "+15551234567" {
+			t.Errorf("expected channel '+15551234567', got %q", ev.Channel)
+		}
+		if ev.Text != "Hello!" {
+			t.Errorf("expected text 'Hello!', got %q", ev.Text)
+		}
+		if !ev.Direct {
+			t.Error("expected Direct to be true for DM")
+		}
+	})
+
+	t.Run("group message", func(t *testing.T) {
+		mu.Lock()
+		published = nil
+		mu.Unlock()
+
+		c.handleIncomingMessage(chatDBRow{
+			RowID:       2,
+			GUID:        "msg-002",
+			Text:        "Hey everyone",
+			Date:        700000001000000000,
+			IsFromMe:    0,
+			HandleID:    "+15559876543",
+			ChatID:      "chat123456",
+			RoomName:    "chat123456",
+			DisplayName: "Family Chat",
+		})
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(published) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(published))
+		}
+		ev := published[0]
+		if ev.Target != "group:Family Chat" {
+			t.Errorf("expected target 'group:Family Chat', got %q", ev.Target)
+		}
+		if ev.Direct {
+			t.Error("expected Direct to be false for group")
+		}
+	})
+
+	t.Run("empty text is skipped", func(t *testing.T) {
+		mu.Lock()
+		published = nil
+		mu.Unlock()
+
+		c.handleIncomingMessage(chatDBRow{
+			RowID:    3,
+			GUID:     "msg-003",
+			Text:     "",
+			Date:     700000002000000000,
+			IsFromMe: 0,
+			HandleID: "+15551234567",
+			ChatID:   "+15551234567",
+		})
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(published) != 0 {
+			t.Fatalf("expected 0 events for empty text, got %d", len(published))
+		}
+	})
+
+	t.Run("filtered by channel allowlist", func(t *testing.T) {
+		filtered := &IMessageConnector{
+			serviceName: "imessage",
+			botName:     "test",
+			channels:    map[string]struct{}{"+15559999999": {}},
+			publish: func(ev protocol.Event) {
+				mu.Lock()
+				published = append(published, ev)
+				mu.Unlock()
+			},
+		}
+
+		mu.Lock()
+		published = nil
+		mu.Unlock()
+
+		filtered.handleIncomingMessage(chatDBRow{
+			RowID:    4,
+			GUID:     "msg-004",
+			Text:     "Should be filtered",
+			Date:     700000003000000000,
+			IsFromMe: 0,
+			HandleID: "+15551234567",
+			ChatID:   "+15551234567",
+		})
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(published) != 0 {
+			t.Fatalf("expected 0 events (filtered), got %d", len(published))
+		}
+	})
+}
+
+func TestAppleTimestampToTime(t *testing.T) {
+	t.Run("nanoseconds", func(t *testing.T) {
+		// 700000000000000000 ns since 2001-01-01 ≈ 2023-03-09
+		ts := appleTimestampToTime(700000000000000000)
+		if ts.Year() < 2020 || ts.Year() > 2030 {
+			t.Errorf("expected year ~2023, got %d", ts.Year())
+		}
+	})
+
+	t.Run("zero returns now", func(t *testing.T) {
+		before := time.Now().UTC()
+		ts := appleTimestampToTime(0)
+		after := time.Now().UTC()
+		if ts.Before(before) || ts.After(after) {
+			t.Errorf("expected zero timestamp to return ~now, got %v", ts)
+		}
+	})
+
+	t.Run("seconds (legacy)", func(t *testing.T) {
+		// 700000000 seconds since 2001-01-01 ≈ 2023-03-09
+		ts := appleTimestampToTime(700000000)
+		if ts.Year() < 2020 || ts.Year() > 2030 {
+			t.Errorf("expected year ~2023, got %d", ts.Year())
+		}
+	})
+}
+
+func TestIMessageSend(t *testing.T) {
+	var mu sync.Mutex
+	var published []protocol.Event
+
+	c := &IMessageConnector{
+		serviceName:  "imessage",
+		botName:      "test",
+		channels:     map[string]struct{}{},
+		osascriptCmd: "echo", // mock osascript — echo just prints and succeeds
+		publish: func(ev protocol.Event) {
+			mu.Lock()
+			published = append(published, ev)
+			mu.Unlock()
+		},
+	}
+
+	t.Run("send text message", func(t *testing.T) {
+		mu.Lock()
+		published = nil
+		mu.Unlock()
+
+		event, err := c.Send(context.Background(), protocol.Request{
+			Channel: "+15551234567",
+			Text:    "Test message",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if event.Direction != "out" {
+			t.Errorf("expected direction 'out', got %q", event.Direction)
+		}
+		if event.Text != "Test message" {
+			t.Errorf("expected text 'Test message', got %q", event.Text)
+		}
+		if event.Channel != "+15551234567" {
+			t.Errorf("expected channel '+15551234567', got %q", event.Channel)
+		}
+	})
+
+	t.Run("send empty text fails", func(t *testing.T) {
+		_, err := c.Send(context.Background(), protocol.Request{
+			Channel: "+15551234567",
+			Text:    "  ",
+		})
+		if err == nil {
+			t.Fatal("expected error for empty text")
+		}
+	})
+
+	t.Run("send without channel fails", func(t *testing.T) {
+		_, err := c.Send(context.Background(), protocol.Request{
+			Text: "Hello",
+		})
+		if err == nil {
+			t.Fatal("expected error for missing channel")
+		}
+	})
+}
+
+func TestNewIMessageConnectorOSCheck(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("OS check only fails on non-darwin")
+	}
+
+	_, err := NewIMessageConnector(config.BotConfig{
+		Name: "test",
+		Type: "imessage",
+	}, func(_ protocol.Event) {})
+
+	if err == nil {
+		t.Fatal("expected error on non-macOS")
+	}
+	if !strings.Contains(err.Error(), "requires macOS") {
+		t.Errorf("expected macOS error, got: %v", err)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+
+	t.Run("tilde path", func(t *testing.T) {
+		got := expandHome("~/Library/Messages/chat.db")
+		want := home + "/Library/Messages/chat.db"
+		if got != want {
+			t.Errorf("expandHome(~/...) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("absolute path unchanged", func(t *testing.T) {
+		got := expandHome("/tmp/chat.db")
+		if got != "/tmp/chat.db" {
+			t.Errorf("expandHome(/tmp/...) = %q, want /tmp/chat.db", got)
+		}
+	})
+
+	t.Run("relative path unchanged", func(t *testing.T) {
+		got := expandHome("chat.db")
+		if got != "chat.db" {
+			t.Errorf("expandHome(chat.db) = %q, want chat.db", got)
 		}
 	})
 }

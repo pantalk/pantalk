@@ -34,6 +34,8 @@ func NewConnector(bot config.BotConfig, publish func(protocol.Event)) (Connector
 		return NewTwilioConnector(bot, publish)
 	case "zulip":
 		return NewZulipConnector(bot, publish)
+	case "imessage":
+		return NewIMessageConnector(bot, publish)
 	default:
 		if bot.Transport == "" {
 			return nil, fmt.Errorf("bot %q requires either supported type or transport", bot.Name)
