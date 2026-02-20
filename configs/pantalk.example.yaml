@@ -43,6 +43,13 @@ bots:
     # channels:               # optional: limit to specific chats
     #   - '1234567890@s.whatsapp.net'
     #   - '12345678-9876543@g.us'
+
+  - name: matrix-bot
+    type: matrix
+    bot_token: $MATRIX_ACCESS_TOKEN
+    endpoint: https://matrix.example.com
+    channels:
+      - '!abc123opaque:matrix.org'
 # Agents are preconfigured commands that launch automatically when matching
 # events arrive. By default only known agent binaries (claude, codex, aider,
 # goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary

@@ -417,3 +417,62 @@ func TestWhatsAppAcceptsChannel(t *testing.T) {
 		}
 	})
 }
+
+// --- Matrix tests ---
+
+func TestResolveMatrixRoom(t *testing.T) {
+	tests := []struct {
+		name    string
+		request protocol.Request
+		want    string
+	}{
+		{"direct channel", protocol.Request{Channel: "!abc:matrix.org"}, "!abc:matrix.org"},
+		{"target with room prefix", protocol.Request{Target: "room:!def:example.com"}, "!def:example.com"},
+		{"target with matrix:room prefix", protocol.Request{Target: "matrix:room:!ghi:host"}, "!ghi:host"},
+		{"target with matrix prefix", protocol.Request{Target: "matrix:!jkl:host"}, "!jkl:host"},
+		{"bare target", protocol.Request{Target: "!mno:host"}, "!mno:host"},
+		{"channel takes precedence", protocol.Request{Channel: "!aaa:host", Target: "!bbb:host"}, "!aaa:host"},
+		{"empty", protocol.Request{}, ""},
+		{"whitespace target", protocol.Request{Target: "  "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveMatrixRoom(tt.request)
+			if got != tt.want {
+				t.Errorf("resolveMatrixRoom() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatrixAcceptsChannel(t *testing.T) {
+	t.Run("empty allowlist accepts all", func(t *testing.T) {
+		c := &MatrixConnector{channels: map[string]struct{}{}}
+		if !c.acceptsChannel("!any:host") {
+			t.Error("expected empty allowlist to accept any channel")
+		}
+	})
+
+	t.Run("allowlist filters", func(t *testing.T) {
+		c := &MatrixConnector{channels: map[string]struct{}{
+			"!abc:matrix.org": {},
+		}}
+		if !c.acceptsChannel("!abc:matrix.org") {
+			t.Error("expected allowed channel to be accepted")
+		}
+		if c.acceptsChannel("!xyz:matrix.org") {
+			t.Error("expected unlisted channel to be rejected")
+		}
+	})
+
+	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
+		c := &MatrixConnector{channels: map[string]struct{}{
+			"!abc:matrix.org": {},
+		}}
+		c.rememberChannel("!def:matrix.org")
+		if !c.acceptsChannel("!def:matrix.org") {
+			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}
