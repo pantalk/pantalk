@@ -26,6 +26,8 @@ func NewConnector(bot config.BotConfig, publish func(protocol.Event)) (Connector
 		return NewTelegramConnector(bot, publish)
 	case "whatsapp":
 		return NewWhatsAppConnector(bot, publish)
+	case "matrix":
+		return NewMatrixConnector(bot, publish)
 	default:
 		if bot.Transport == "" {
 			return nil, fmt.Errorf("bot %q requires either supported type or transport", bot.Name)
