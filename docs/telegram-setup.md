@@ -90,8 +90,10 @@ bots:
     type: telegram
     bot_token: $TELEGRAM_BOT_TOKEN
     channels:
-      - '-1001234567890'    # replace with your chat ID (quote negative IDs)
+      - '@my_alerts_channel' # public channel username (resolved at startup)
 ```
+
+Channels accept either public channel usernames (e.g. `@mychannel`) or raw numeric chat IDs (e.g. `-1001234567890`). Public usernames are resolved to numeric IDs automatically when the daemon starts. Private group chats still require numeric IDs.
 
 > **Note:** The `endpoint` field is optional and defaults to `https://api.telegram.org`. Only set it if you're using a custom Bot API server.
 

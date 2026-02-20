@@ -84,8 +84,10 @@ bots:
     bot_email: $ZULIP_BOT_EMAIL
     endpoint: https://your-org.zulipchat.com
     channels:
-      - '123'    # replace with your stream ID
+      - general  # stream name (resolved to stream ID at startup)
 ```
+
+Channels accept either friendly stream names (e.g. `general`, `engineering`) or raw numeric stream IDs (e.g. `123`). Stream names are resolved to IDs automatically when the daemon starts.
 
 > **Important:** All three fields (`endpoint`, `api_key`, `bot_email`) are **required** for Zulip.
 

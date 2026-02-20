@@ -114,6 +114,8 @@ func (d *DiscordConnector) connectAndRun(ctx context.Context) error {
 		log.Printf("[discord:%s] authenticated (user=%s)", d.botName, stateUser.ID)
 	}
 
+	d.resolveChannelNames()
+
 	d.publishStatus("connector online")
 
 	heartbeatTicker := time.NewTicker(45 * time.Second)
@@ -296,4 +298,67 @@ func resolveDiscordChannel(request protocol.Request) string {
 	}
 
 	return target
+}
+
+// resolveChannelNames resolves any friendly channel names (e.g. "#general",
+// "announcements") to Discord snowflake IDs by listing guild channels.
+// Entries that already look like Discord IDs are left unchanged.
+func (d *DiscordConnector) resolveChannelNames() {
+	d.mu.RLock()
+	var toResolve []string
+	for ch := range d.channels {
+		if !isDiscordChannelID(ch) {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	d.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	// Build a name→ID lookup across all guilds the bot is in.
+	nameToID := make(map[string]string)
+	guilds, err := d.session.UserGuilds(200, "", "", false)
+	if err != nil {
+		log.Printf("[discord:%s] channel resolution: failed to list guilds: %v", d.botName, err)
+		return
+	}
+	for _, guild := range guilds {
+		channels, err := d.session.GuildChannels(guild.ID)
+		if err != nil {
+			log.Printf("[discord:%s] channel resolution: failed to list channels in guild %s: %v", d.botName, guild.Name, err)
+			continue
+		}
+		for _, c := range channels {
+			nameToID[c.Name] = c.ID
+		}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, name := range toResolve {
+		cleaned := strings.TrimPrefix(name, "#")
+		if id, ok := nameToID[cleaned]; ok {
+			delete(d.channels, name)
+			d.channels[id] = struct{}{}
+			log.Printf("[discord:%s] resolved channel %q → %s", d.botName, name, id)
+		} else {
+			log.Printf("[discord:%s] could not resolve channel %q – keeping as-is", d.botName, name)
+		}
+	}
+}
+
+// isDiscordChannelID returns true when s looks like a Discord snowflake ID
+// (an all-digit string of 17-20 characters).
+func isDiscordChannelID(s string) bool {
+	if len(s) < 17 || len(s) > 20 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

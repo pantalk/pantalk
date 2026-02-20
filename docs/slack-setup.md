@@ -89,8 +89,10 @@ bots:
     bot_token: $SLACK_BOT_TOKEN
     app_level_token: $SLACK_APP_LEVEL_TOKEN
     channels:
-      - C0123456789    # replace with your channel ID
+      - '#general'     # friendly name (resolved to channel ID at startup)
 ```
+
+Channels accept either friendly names (e.g. `#general`, `engineering`) or raw Slack IDs (e.g. `C0123456789`). Friendly names are resolved to IDs automatically when the daemon starts.
 
 Token fields accept either a literal string or an environment variable reference (`$VAR` or `${VAR}`).
 
@@ -106,7 +108,7 @@ pantalk bots
 You should see your Slack bot listed. Send a test message:
 
 ```bash
-pantalk send --bot my-slack-bot --channel C0123456789 --text "Hello from Pantalk!"
+pantalk send --bot my-slack-bot --channel '#general' --text "Hello from Pantalk!"
 ```
 
 ## Troubleshooting

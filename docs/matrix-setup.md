@@ -72,8 +72,10 @@ bots:
     access_token: $MATRIX_ACCESS_TOKEN
     endpoint: https://matrix.example.com    # your homeserver URL
     channels:
-      - '!abc123:matrix.org'                # replace with your room ID
+      - '#general:matrix.org'               # room alias (resolved to room ID at startup)
 ```
+
+Channels accept either room aliases (e.g. `#general:matrix.org`) or raw room IDs (e.g. `!abc123:matrix.org`). Room aliases are resolved to IDs automatically when the daemon connects.
 
 ### Configuration Reference
 
@@ -82,7 +84,7 @@ bots:
 | `type`     | Must be `matrix`                                           | Yes      |
 | `access_token`| Access token (supports `$ENV_VAR` syntax)                  | Yes      |
 | `endpoint` | Homeserver URL (e.g. `https://matrix.org`)                 | Yes      |
-| `channels` | Allowlist of room IDs to listen to (empty = all rooms)     | No       |
+| `channels` | Allowlist of room IDs or aliases to listen to (empty = all rooms) | No |
 
 ## Verify
 
