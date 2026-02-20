@@ -12,6 +12,7 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20260219150138-7ae702b1eed4
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
+	maunium.net/go/mautrix v0.26.3
 )
 
 require (
@@ -37,6 +38,5 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
-	maunium.net/go/mautrix v0.26.3 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )

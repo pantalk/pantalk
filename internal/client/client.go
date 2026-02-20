@@ -41,6 +41,8 @@ func Run(service string, toolName string, args []string) int {
 	switch command {
 	case "bots":
 		return runBots(service, commandArgs)
+	case "status":
+		return runStatus(service, commandArgs)
 	case "send":
 		return runSend(service, commandArgs)
 	case "history":
@@ -105,6 +107,69 @@ func runBots(service string, args []string) int {
 	}
 
 	return 0
+}
+
+func runStatus(service string, args []string) int {
+	flags := flag.NewFlagSet("status", flag.ContinueOnError)
+	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	_ = service // status is global — no service filter
+
+	resp, err := call(*socket, protocol.Request{Action: protocol.ActionStatus})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	if !resp.OK {
+		fmt.Fprintln(os.Stderr, resp.Error)
+		return 1
+	}
+
+	if resp.Status == nil {
+		fmt.Fprintln(os.Stderr, "daemon returned empty status")
+		return 1
+	}
+
+	if *jsonOut {
+		_ = json.NewEncoder(os.Stdout).Encode(resp.Status)
+		return 0
+	}
+
+	st := resp.Status
+	fmt.Printf("uptime:  %s\n", formatUptime(st.UptimeSec))
+	fmt.Printf("started: %s\n", st.StartedAt.Local().Format("2006-01-02 15:04:05"))
+	fmt.Printf("bots:    %d\n", len(st.Bots))
+	for _, b := range st.Bots {
+		name := b.DisplayName
+		if name == "" {
+			name = b.Name
+		}
+		fmt.Printf("  %-20s  %s\n", name, b.Service)
+	}
+	fmt.Printf("agents:  %d\n", len(st.Agents))
+	for _, a := range st.Agents {
+		fmt.Printf("  %-20s  when: %s\n", a.Name, a.When)
+	}
+
+	return 0
+}
+
+// formatUptime formats a duration in seconds as a human-readable string.
+func formatUptime(secs int64) string {
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	if secs < 3600 {
+		return fmt.Sprintf("%dm%ds", secs/60, secs%60)
+	}
+	h := secs / 3600
+	m := (secs % 3600) / 60
+	return fmt.Sprintf("%dh%dm", h, m)
 }
 
 func runSend(service string, args []string) int {
@@ -448,6 +513,7 @@ func printUsage(toolName string) {
 
 Messaging:
   %s bots%s [--json]
+  %s status [--json]
   %s send --bot NAME --text MESSAGE (--target ID | --channel ID | --thread ID)%s [--json]
   %s history [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--limit N] [--since ID] [--clear [--all]]%s [--json]
   %s notifications [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--unseen] [--limit N] [--since ID] [--clear [--all]]%s [--json]
@@ -472,6 +538,7 @@ Admin:
 JSON output is enabled by default when stdout is not a terminal.
 `, toolName,
 		toolName, svcHint,
+		toolName,
 		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,

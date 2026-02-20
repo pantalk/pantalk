@@ -35,6 +35,12 @@ type BotConfig struct {
 	Transport     string   `yaml:"transport"`
 	Endpoint      string   `yaml:"endpoint"`
 	Password      string   `yaml:"password"`
+	AuthToken     string   `yaml:"auth_token"`
+	AccountSID    string   `yaml:"account_sid"`
+	PhoneNumber   string   `yaml:"phone_number"`
+	APIKey        string   `yaml:"api_key"`
+	BotEmail      string   `yaml:"bot_email"`
+	AccessToken   string   `yaml:"access_token"`
 	DBPath        string   `yaml:"db_path"`
 	Channels      []string `yaml:"channels"`
 }
@@ -169,6 +175,26 @@ func validate(cfg Config, allowExec bool) error {
 		case "irc":
 			if strings.TrimSpace(bot.Endpoint) == "" {
 				return fmt.Errorf("bot %q requires endpoint for irc (e.g. irc.libera.chat:6697)", bot.Name)
+			}
+		case "twilio":
+			if strings.TrimSpace(bot.AuthToken) == "" {
+				return fmt.Errorf("bot %q requires auth_token (Twilio Auth Token)", bot.Name)
+			}
+			if strings.TrimSpace(bot.AccountSID) == "" {
+				return fmt.Errorf("bot %q requires account_sid (Twilio Account SID)", bot.Name)
+			}
+			if strings.TrimSpace(bot.PhoneNumber) == "" {
+				return fmt.Errorf("bot %q requires phone_number (Twilio phone number)", bot.Name)
+			}
+		case "zulip":
+			if strings.TrimSpace(bot.Endpoint) == "" {
+				return fmt.Errorf("bot %q requires endpoint (Zulip server URL)", bot.Name)
+			}
+			if strings.TrimSpace(bot.APIKey) == "" {
+				return fmt.Errorf("bot %q requires api_key (Zulip API key)", bot.Name)
+			}
+			if strings.TrimSpace(bot.BotEmail) == "" {
+				return fmt.Errorf("bot %q requires bot_email (Zulip bot email)", bot.Name)
 			}
 		default:
 			if strings.TrimSpace(bot.Transport) == "" {

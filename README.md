@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Give your AI agent a voice on every chat platform.</strong><br/>
-  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, and Matrix through a single interface.
+  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, and Zulip through a single interface.
 </p>
 
 <p align="center">
@@ -17,33 +17,31 @@
 
 ## The Problem
 
-AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, Zulip. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
 
 ## The Solution
 
 Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity - auth, sessions, reconnects, rate limits - while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
 
-```
-┌──────────────────────────────────────────────────┐
-│                    Your AI Agent                 │
-│              (any language, any framework)       │
-└────────┬──────────┬──────────┬──────────┬────────┘
-         │          │          │          │
-       send      history    notify     stream
-         │          │          │          │
-         └──────────┴─────┬────┴──────────┘
-                          │
-                  Unix Domain Socket
-                   (JSON protocol)
-                          │
-                    ┌─────┴─────┐
-                    │ pantalkd  │
-                    │ (daemon)  │
-                    └─────┬─────┘
-                          │
-        ┌─────────┬───────┼────────┬──────────┬────────┬────────┐
-        ▼         ▼       ▼        ▼          ▼        ▼        ▼
-      Slack    Discord   MM    Telegram  WhatsApp    IRC    Matrix  ...
+```mermaid
+graph TD
+    Agent["Your AI Agent<br/><em>(any language, any framework)</em>"]
+    Agent -->|send| Socket
+    Agent -->|history| Socket
+    Agent -->|notify| Socket
+    Agent -->|stream| Socket
+    Socket["Unix Domain Socket<br/><em>(JSON protocol)</em>"]
+    Socket --> Daemon["pantalkd<br/><em>(daemon)</em>"]
+    Daemon --> Slack
+    Daemon --> Discord
+    Daemon --> Mattermost
+    Daemon --> Telegram
+    Daemon --> WhatsApp
+    Daemon --> IRC
+    Daemon --> Matrix
+    Daemon --> Twilio
+    Daemon --> Zulip
+    Daemon --> More["..."]
 ```
 
 ## Why Pantalk
@@ -68,6 +66,8 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
 | **WhatsApp**   | Web multi-device (whatsmeow)    | ✅ Full support |
 | **IRC**        | TCP/TLS + IRC protocol          | ✅ Full support |
 | **Matrix**     | Client-Server API (mautrix-go)  | ✅ Full support |
+| **Twilio**     | REST API (polling + send)       | ✅ Full support |
+| **Zulip**      | REST API + Event Queue          | ✅ Full support |
 
 ---
 
@@ -105,6 +105,8 @@ docs/
   whatsapp-setup.md      # WhatsApp platform setup guide
   irc-setup.md           # IRC platform setup guide
   matrix-setup.md        # Matrix platform setup guide
+  twilio-setup.md        # Twilio platform setup guide
+  zulip-setup.md         # Zulip platform setup guide
   claude-code-hooks.md   # Claude Code hooks integration guide
 internal/
   client/                # Shared IPC client logic
@@ -277,6 +279,8 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 | WhatsApp   | Web multi-device  | `SendMessage` |
 | IRC        | TCP/TLS           | `PRIVMSG`     |
 | Matrix     | Client-Server API | REST API      |
+| Twilio     | REST API poll     | REST API      |
+| Zulip      | Event Queue       | REST API      |
 
 ### Persistence
 
@@ -343,6 +347,8 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | WhatsApp   | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device        |
 | IRC        | [IRC Setup](docs/irc-setup.md)               | TCP/TLS                 |
 | Matrix     | [Matrix Setup](docs/matrix-setup.md)         | Client-Server API       |
+| Twilio     | [Twilio Setup](docs/twilio-setup.md)         | REST API (polling)      |
+| Zulip      | [Zulip Setup](docs/zulip-setup.md)           | REST API + Event Queue  |
 
 ---
 

@@ -616,3 +616,138 @@ func TestMatrixAcceptsChannel(t *testing.T) {
 		}
 	})
 }
+
+// --- Twilio tests ---
+
+func TestResolveTwilioChannel(t *testing.T) {
+	tests := []struct {
+		name    string
+		request protocol.Request
+		want    string
+	}{
+		{"direct channel", protocol.Request{Channel: "+15551234567"}, "+15551234567"},
+		{"target with phone prefix", protocol.Request{Target: "phone:+15559876543"}, "+15559876543"},
+		{"target with twilio:phone prefix", protocol.Request{Target: "twilio:phone:+15551111111"}, "+15551111111"},
+		{"target with twilio prefix", protocol.Request{Target: "twilio:+15552222222"}, "+15552222222"},
+		{"bare target", protocol.Request{Target: "+15553333333"}, "+15553333333"},
+		{"channel takes precedence", protocol.Request{Channel: "+1111", Target: "+2222"}, "+1111"},
+		{"empty", protocol.Request{}, ""},
+		{"whitespace target", protocol.Request{Target: "  "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveTwilioChannel(tt.request)
+			if got != tt.want {
+				t.Errorf("resolveTwilioChannel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTwilioDate(t *testing.T) {
+	t.Run("RFC1123Z format", func(t *testing.T) {
+		ts := parseTwilioDate("Thu, 01 Feb 2024 12:30:00 +0000")
+		if ts.Year() != 2024 || ts.Month() != 2 || ts.Day() != 1 {
+			t.Errorf("unexpected date: %v", ts)
+		}
+	})
+
+	t.Run("invalid format returns current time", func(t *testing.T) {
+		ts := parseTwilioDate("not-a-date")
+		if ts.IsZero() {
+			t.Error("expected fallback timestamp, got zero")
+		}
+	})
+}
+
+func TestTwilioAcceptsChannel(t *testing.T) {
+	t.Run("empty allowlist accepts all", func(t *testing.T) {
+		c := &TwilioConnector{channels: map[string]struct{}{}}
+		if !c.acceptsChannel("+15551234567") {
+			t.Error("expected empty allowlist to accept any channel")
+		}
+	})
+
+	t.Run("allowlist filters", func(t *testing.T) {
+		c := &TwilioConnector{channels: map[string]struct{}{
+			"+15551234567": {},
+		}}
+		if !c.acceptsChannel("+15551234567") {
+			t.Error("expected allowed channel to be accepted")
+		}
+		if c.acceptsChannel("+15559999999") {
+			t.Error("expected unlisted channel to be rejected")
+		}
+	})
+
+	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
+		c := &TwilioConnector{channels: map[string]struct{}{
+			"+15551234567": {},
+		}}
+		c.rememberChannel("+15559876543")
+		if !c.acceptsChannel("+15559876543") {
+			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}
+
+// --- Zulip tests ---
+
+func TestResolveZulipChannel(t *testing.T) {
+	tests := []struct {
+		name    string
+		request protocol.Request
+		want    string
+	}{
+		{"direct channel", protocol.Request{Channel: "12345"}, "12345"},
+		{"target with channel prefix", protocol.Request{Target: "channel:67890"}, "67890"},
+		{"target with zulip:channel prefix", protocol.Request{Target: "zulip:channel:111"}, "111"},
+		{"target with stream prefix", protocol.Request{Target: "stream:222"}, "222"},
+		{"target with zulip:stream prefix", protocol.Request{Target: "zulip:stream:333"}, "333"},
+		{"bare target", protocol.Request{Target: "444"}, "444"},
+		{"channel takes precedence", protocol.Request{Channel: "aaa", Target: "bbb"}, "aaa"},
+		{"empty", protocol.Request{}, ""},
+		{"whitespace target", protocol.Request{Target: "  "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveZulipChannel(tt.request)
+			if got != tt.want {
+				t.Errorf("resolveZulipChannel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestZulipAcceptsChannel(t *testing.T) {
+	t.Run("empty allowlist accepts all", func(t *testing.T) {
+		c := &ZulipConnector{channels: map[string]struct{}{}}
+		if !c.acceptsChannel("12345") {
+			t.Error("expected empty allowlist to accept any channel")
+		}
+	})
+
+	t.Run("allowlist filters", func(t *testing.T) {
+		c := &ZulipConnector{channels: map[string]struct{}{
+			"12345": {},
+		}}
+		if !c.acceptsChannel("12345") {
+			t.Error("expected allowed channel to be accepted")
+		}
+		if c.acceptsChannel("99999") {
+			t.Error("expected unlisted channel to be rejected")
+		}
+	})
+
+	t.Run("rememberChannel adds to allowlist", func(t *testing.T) {
+		c := &ZulipConnector{channels: map[string]struct{}{
+			"12345": {},
+		}}
+		c.rememberChannel("67890")
+		if !c.acceptsChannel("67890") {
+			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}

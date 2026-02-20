@@ -3,6 +3,8 @@ server:
   # db_path: defaults to ~/.local/share/pantalk/pantalk.db
   notification_history_size: 1000
 
+# ---
+
 bots:
   - name: ops-bot
     type: slack
@@ -53,10 +55,29 @@ bots:
 
   - name: matrix-bot
     type: matrix
-    bot_token: $MATRIX_ACCESS_TOKEN
+    access_token: $MATRIX_ACCESS_TOKEN
     endpoint: https://matrix.example.com
     channels:
       - '!abc123opaque:matrix.org'
+
+  - name: sms-bot
+    type: twilio
+    auth_token: $TWILIO_AUTH_TOKEN
+    account_sid: $TWILIO_ACCOUNT_SID
+    phone_number: '+15551234567'
+    channels:
+      - '+15559876543'
+
+  - name: zulip-bot
+    type: zulip
+    api_key: $ZULIP_API_KEY
+    bot_email: $ZULIP_BOT_EMAIL
+    endpoint: https://your-org.zulipchat.com
+    channels:
+      - '123' # stream ID
+
+# ---
+
 # Agents are preconfigured commands that launch automatically when matching
 # events arrive. By default only known agent binaries (claude, codex, aider,
 # goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary

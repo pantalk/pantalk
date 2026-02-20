@@ -5,6 +5,7 @@ import "time"
 const (
 	ActionPing         = "ping"
 	ActionBots         = "bots"
+	ActionStatus       = "status"
 	ActionSend         = "send"
 	ActionHistory      = "history"
 	ActionNotify       = "notifications"
@@ -31,13 +32,37 @@ type Request struct {
 }
 
 type Response struct {
-	OK      bool     `json:"ok"`
-	Error   string   `json:"error,omitempty"`
-	Ack     string   `json:"ack,omitempty"`
-	Bots    []BotRef `json:"bots,omitempty"`
-	Events  []Event  `json:"events,omitempty"`
-	Event   *Event   `json:"event,omitempty"`
-	Cleared int64    `json:"cleared,omitempty"`
+	OK      bool         `json:"ok"`
+	Error   string       `json:"error,omitempty"`
+	Ack     string       `json:"ack,omitempty"`
+	Bots    []BotRef     `json:"bots,omitempty"`
+	Events  []Event      `json:"events,omitempty"`
+	Event   *Event       `json:"event,omitempty"`
+	Cleared int64        `json:"cleared,omitempty"`
+	Status  *DaemonStatus `json:"status,omitempty"`
+}
+
+// DaemonStatus holds a snapshot of the daemon's runtime state returned by
+// the "status" action. It is designed to be consumed by agents and operators
+// who need to quickly verify that pantalkd is healthy.
+type DaemonStatus struct {
+	StartedAt time.Time   `json:"started_at"`
+	UptimeSec int64       `json:"uptime_sec"`
+	Bots      []BotStatus `json:"bots"`
+	Agents    []AgentInfo `json:"agents"`
+}
+
+// BotStatus describes a single configured bot.
+type BotStatus struct {
+	Name        string `json:"name"`
+	Service     string `json:"service"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+// AgentInfo describes a configured agent runner.
+type AgentInfo struct {
+	Name string `json:"name"`
+	When string `json:"when"`
 }
 
 type BotRef struct {
