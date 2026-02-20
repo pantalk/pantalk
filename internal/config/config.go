@@ -196,6 +196,11 @@ func validate(cfg Config, allowExec bool) error {
 			if strings.TrimSpace(bot.BotEmail) == "" {
 				return fmt.Errorf("bot %q requires bot_email (Zulip bot email)", bot.Name)
 			}
+		case "imessage":
+			// Native macOS integration — no credentials required. The
+			// connector reads ~/Library/Messages/chat.db directly and
+			// sends via AppleScript. db_path is optional (defaults to
+			// ~/Library/Messages/chat.db).
 		default:
 			if strings.TrimSpace(bot.Transport) == "" {
 				return fmt.Errorf("bot %q transport cannot be empty for custom type %q", bot.Name, bot.Type)

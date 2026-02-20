@@ -76,6 +76,13 @@ bots:
     channels:
       - general # stream name (resolved to stream ID at startup)
 
+  - name: my-imessage
+    type: imessage
+    # db_path: ~/Library/Messages/chat.db  # optional: defaults to standard location
+    # channels:                            # optional: limit to specific conversations
+    #   - '+15551234567'                   # DM by phone number
+    #   - 'user@example.com'              # DM by email
+
 # ---
 
 # Agents are preconfigured commands that launch automatically when matching
