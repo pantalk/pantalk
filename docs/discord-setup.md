@@ -77,10 +77,10 @@ bots:
     type: discord
     bot_token: $DISCORD_BOT_TOKEN
     channels:
-      - '123456789012345678'    # replace with your channel ID
+      - '#general'               # friendly name (resolved to channel ID at startup)
 ```
 
-> **Note:** Channel IDs should be quoted strings in YAML since they are numeric.
+Channels accept either friendly names (e.g. `#general`, `announcements`) or raw Discord snowflake IDs (e.g. `123456789012345678`). Friendly names are resolved to IDs automatically when the daemon connects.
 
 ## Verify
 
@@ -94,7 +94,7 @@ pantalk bots
 You should see your Discord bot listed. Send a test message:
 
 ```bash
-pantalk send --bot my-discord-bot --channel 123456789012345678 --text "Hello from Pantalk!"
+pantalk send --bot my-discord-bot --channel '#general' --text "Hello from Pantalk!"
 ```
 
 ## Troubleshooting

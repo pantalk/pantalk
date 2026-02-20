@@ -112,6 +112,9 @@ func (m *MatrixConnector) connectAndRun(ctx context.Context) error {
 	m.mu.Unlock()
 
 	log.Printf("[matrix:%s] authenticated (user=%s)", m.botName, resp.UserID)
+
+	m.resolveChannelNames(ctx)
+
 	m.publishStatus("connector online")
 
 	// Register the sync event handler for incoming room messages.
@@ -301,4 +304,37 @@ func resolveMatrixRoom(request protocol.Request) string {
 	}
 
 	return strings.TrimSpace(raw)
+}
+
+// resolveChannelNames resolves any room aliases (e.g. "#general:matrix.org")
+// to Matrix room IDs (e.g. "!abc123:matrix.org") via the ResolveAlias API.
+// Entries that already look like room IDs (starting with "!") are left
+// unchanged.
+func (m *MatrixConnector) resolveChannelNames(ctx context.Context) {
+	m.mu.RLock()
+	var toResolve []string
+	for ch := range m.channels {
+		if strings.HasPrefix(ch, "#") {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, alias := range toResolve {
+		resp, err := m.client.ResolveAlias(ctx, id.RoomAlias(alias))
+		if err != nil {
+			log.Printf("[matrix:%s] could not resolve room alias %q: %v – keeping as-is", m.botName, alias, err)
+			continue
+		}
+		resolved := string(resp.RoomID)
+		delete(m.channels, alias)
+		m.channels[resolved] = struct{}{}
+		log.Printf("[matrix:%s] resolved room alias %q → %s", m.botName, alias, resolved)
+	}
 }

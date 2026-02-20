@@ -1,6 +1,11 @@
 package upstream
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -748,6 +753,452 @@ func TestZulipAcceptsChannel(t *testing.T) {
 		c.rememberChannel("67890")
 		if !c.acceptsChannel("67890") {
 			t.Error("expected remembered channel to be accepted")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// isSlackChannelID tests
+// ---------------------------------------------------------------------------
+
+func TestIsSlackChannelID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid Slack IDs
+		{"C0123456789", true},
+		{"C0123ABCDEF", true},
+		{"G01AB2CD3EF", true},
+		{"D04EXAMPLE0", true},
+		{"C012345678901234", true}, // longer IDs are valid
+
+		// Friendly names (should NOT match)
+		{"#general", false},
+		{"general", false},
+		{"engineering", false},
+		{"#ops-alerts", false},
+		{"my-channel", false},
+
+		// Edge cases
+		{"", false},
+		{"C", false},
+		{"C01234", false},       // too short
+		{"c0123456789", false},  // lowercase prefix
+		{"X0123456789", false},  // wrong prefix letter
+		{"C0123456 89", false},  // space inside
+		{"C012345678a", false},  // lowercase letter
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isSlackChannelID(tt.input)
+			if got != tt.want {
+				t.Errorf("isSlackChannelID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isDiscordChannelID tests
+// ---------------------------------------------------------------------------
+
+func TestIsDiscordChannelID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid Discord snowflakes
+		{"12345678901234567", true},   // 17 digits
+		{"123456789012345678", true},  // 18 digits
+		{"1234567890123456789", true}, // 19 digits
+		{"12345678901234567890", true}, // 20 digits
+
+		// Friendly names
+		{"#general", false},
+		{"general", false},
+		{"announcements", false},
+		{"voice-chat", false},
+
+		// Edge cases
+		{"", false},
+		{"1234567890123456", false},    // 16 digits - too short
+		{"123456789012345678901", false}, // 21 digits - too long
+		{"1234567890123456a", false},    // letter in digits
+		{"12345678901234567 ", false},   // trailing space
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isDiscordChannelID(tt.input)
+			if got != tt.want {
+				t.Errorf("isDiscordChannelID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isMattermostChannelID tests
+// ---------------------------------------------------------------------------
+
+func TestIsMattermostChannelID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid Mattermost IDs (26 lowercase alphanumeric)
+		{"a1b2c3d4e5f6g7h8i9j0klmnop", true},
+		{"abcdefghijklmnopqrstuvwxyz", true},
+		{"01234567890123456789012345", true},
+
+		// Friendly names
+		{"town-square", false},
+		{"off-topic", false},
+		{"general", false},
+		{"engineering-team", false},
+
+		// Edge cases
+		{"", false},
+		{"a1b2c3d4e5f6g7h8i9j0klmno", false},  // 25 chars - too short
+		{"a1b2c3d4e5f6g7h8i9j0klmnopq", false}, // 27 chars - too long
+		{"A1B2C3D4E5F6G7H8I9J0KLMNOP", false},  // uppercase
+		{"a1b2c3d4e5f6g7h8i9j0klmno!", false},   // special char
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isMattermostChannelID(tt.input)
+			if got != tt.want {
+				t.Errorf("isMattermostChannelID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isTelegramChatID tests
+// ---------------------------------------------------------------------------
+
+func TestIsTelegramChatID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid Telegram chat IDs (positive and negative integers)
+		{"-1001234567890", true},
+		{"1234567890", true},
+		{"-100", true},
+		{"0", true},
+
+		// Friendly names
+		{"@mychannel", false},
+		{"@my_alerts_channel", false},
+		{"mygroup", false},
+
+		// Edge cases
+		{"", false},
+		{"12.34", false},
+		{"abc", false},
+		{"-", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isTelegramChatID(tt.input)
+			if got != tt.want {
+				t.Errorf("isTelegramChatID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isZulipStreamID tests
+// ---------------------------------------------------------------------------
+
+func TestIsZulipStreamID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Valid Zulip stream IDs (positive integers)
+		{"123", true},
+		{"1", true},
+		{"999999", true},
+		{"0", true},
+
+		// Friendly names
+		{"general", false},
+		{"engineering", false},
+		{"design-team", false},
+		{"#general", false},
+
+		// Edge cases
+		{"", false},
+		{"12.5", false},
+		{"abc", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isZulipStreamID(tt.input)
+			if got != tt.want {
+				t.Errorf("isZulipStreamID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Mattermost resolveChannelNames integration test (with httptest)
+// ---------------------------------------------------------------------------
+
+func TestMattermostResolveChannelNames(t *testing.T) {
+	mux := http.NewServeMux()
+
+	// /api/v4/users/me/teams → returns one team
+	mux.HandleFunc("/api/v4/users/me/teams", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]string{{"id": "team1"}})
+	})
+
+	// /api/v4/teams/team1/channels/name/town-square → returns resolved ID
+	mux.HandleFunc("/api/v4/teams/team1/channels/name/town-square", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"id": "resolved_channel_id_1"})
+	})
+
+	// /api/v4/teams/team1/channels/name/unknown → 404
+	mux.HandleFunc("/api/v4/teams/team1/channels/name/unknown", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Run("resolves friendly name to ID", func(t *testing.T) {
+		c := &MattermostConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			token:      "test-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"town-square": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["resolved_channel_id_1"]; !ok {
+			t.Error("expected 'town-square' to be resolved to 'resolved_channel_id_1'")
+		}
+		if _, ok := c.channels["town-square"]; ok {
+			t.Error("expected 'town-square' to be removed after resolution")
+		}
+	})
+
+	t.Run("keeps raw ID unchanged", func(t *testing.T) {
+		rawID := "a1b2c3d4e5f6g7h8i9j0klmnop"
+		c := &MattermostConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			token:      "test-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{rawID: {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels[rawID]; !ok {
+			t.Error("expected raw ID to remain unchanged")
+		}
+	})
+
+	t.Run("keeps unresolvable name as-is", func(t *testing.T) {
+		c := &MattermostConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			token:      "test-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"unknown": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["unknown"]; !ok {
+			t.Error("expected unresolvable name to remain as-is")
+		}
+	})
+
+	t.Run("mixed raw IDs and friendly names", func(t *testing.T) {
+		rawID := "a1b2c3d4e5f6g7h8i9j0klmnop"
+		c := &MattermostConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			token:      "test-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{rawID: {}, "town-square": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels[rawID]; !ok {
+			t.Error("expected raw ID to remain")
+		}
+		if _, ok := c.channels["resolved_channel_id_1"]; !ok {
+			t.Error("expected 'town-square' to be resolved")
+		}
+		if len(c.channels) != 2 {
+			t.Errorf("expected 2 channels, got %d", len(c.channels))
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Telegram resolveChannelNames integration test (with httptest)
+// ---------------------------------------------------------------------------
+
+func TestTelegramResolveChannelNames(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/bottest-token/getChat", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		chatID := body["chat_id"]
+
+		if chatID == "@mychannel" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":     true,
+				"result": map[string]interface{}{"id": -1001234567890},
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok": false,
+			})
+		}
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Run("resolves @username to chat ID", func(t *testing.T) {
+		c := &TelegramConnector{
+			botName:    "test",
+			baseURL:    srv.URL + "/bottest-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"@mychannel": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["-1001234567890"]; !ok {
+			t.Error("expected '@mychannel' to be resolved to '-1001234567890'")
+		}
+		if _, ok := c.channels["@mychannel"]; ok {
+			t.Error("expected '@mychannel' to be removed after resolution")
+		}
+	})
+
+	t.Run("keeps numeric chat ID unchanged", func(t *testing.T) {
+		c := &TelegramConnector{
+			botName:    "test",
+			baseURL:    srv.URL + "/bottest-token",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"-1001234567890": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["-1001234567890"]; !ok {
+			t.Error("expected numeric ID to remain unchanged")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Zulip resolveChannelNames integration test (with httptest)
+// ---------------------------------------------------------------------------
+
+func TestZulipResolveChannelNames(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/v1/get_stream_id", func(w http.ResponseWriter, r *http.Request) {
+		stream := r.URL.Query().Get("stream")
+		switch stream {
+		case "general":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"result":    "success",
+				"stream_id": 42,
+			})
+		case "engineering":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"result":    "success",
+				"stream_id": 99,
+			})
+		default:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"result": "error",
+				"msg":    fmt.Sprintf("Invalid stream name '%s'", stream),
+			})
+		}
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Run("resolves stream name to ID", func(t *testing.T) {
+		c := &ZulipConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			email:      "bot@example.com",
+			apiKey:     "test-key",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"general": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["42"]; !ok {
+			t.Error("expected 'general' to be resolved to '42'")
+		}
+		if _, ok := c.channels["general"]; ok {
+			t.Error("expected 'general' to be removed after resolution")
+		}
+	})
+
+	t.Run("keeps numeric ID unchanged", func(t *testing.T) {
+		c := &ZulipConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			email:      "bot@example.com",
+			apiKey:     "test-key",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"42": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["42"]; !ok {
+			t.Error("expected numeric ID to remain unchanged")
+		}
+	})
+
+	t.Run("resolves multiple stream names", func(t *testing.T) {
+		c := &ZulipConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			email:      "bot@example.com",
+			apiKey:     "test-key",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"general": {}, "engineering": {}, "42": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["42"]; !ok {
+			t.Error("expected existing '42' to remain")
+		}
+		if _, ok := c.channels["99"]; !ok {
+			t.Error("expected 'engineering' to be resolved to '99'")
+		}
+		// 'general' resolves to '42' which already exists — both should merge
+		if len(c.channels) > 3 {
+			t.Errorf("expected at most 3 channels, got %d", len(c.channels))
+		}
+	})
+
+	t.Run("keeps unresolvable name as-is", func(t *testing.T) {
+		c := &ZulipConnector{
+			botName:    "test",
+			endpoint:   srv.URL,
+			email:      "bot@example.com",
+			apiKey:     "test-key",
+			httpClient: srv.Client(),
+			channels:   map[string]struct{}{"nonexistent": {}},
+		}
+		c.resolveChannelNames(context.Background())
+		if _, ok := c.channels["nonexistent"]; !ok {
+			t.Error("expected unresolvable name to remain as-is")
 		}
 	})
 }

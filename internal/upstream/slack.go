@@ -116,6 +116,8 @@ func (s *SlackConnector) connectAndRun(ctx context.Context) error {
 
 	log.Printf("[slack:%s] authenticated (user=%s)", s.botName, auth.UserID)
 
+	s.resolveChannelNames(ctx)
+
 	go s.socket.RunContext(ctx)
 
 	s.publishStatus("connector online")
@@ -421,4 +423,76 @@ func parseSlackTimestamp(ts string) time.Time {
 	seconds := int64(value)
 	nanos := int64((value - float64(seconds)) * float64(time.Second))
 	return time.Unix(seconds, nanos).UTC()
+}
+
+// resolveChannelNames resolves any friendly channel names (e.g. "#general",
+// "engineering") to Slack channel IDs by querying the conversations.list API.
+// Entries that already look like Slack IDs are left unchanged.
+func (s *SlackConnector) resolveChannelNames(ctx context.Context) {
+	s.mu.RLock()
+	var toResolve []string
+	for ch := range s.channels {
+		if !isSlackChannelID(ch) {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	// Fetch all visible conversations to build a name→ID lookup.
+	nameToID := make(map[string]string)
+	cursor := ""
+	for {
+		params := &slack.GetConversationsParameters{
+			Types:           []string{"public_channel", "private_channel"},
+			Limit:           200,
+			Cursor:          cursor,
+			ExcludeArchived: true,
+		}
+		channels, nextCursor, err := s.api.GetConversationsContext(ctx, params)
+		if err != nil {
+			log.Printf("[slack:%s] channel resolution: failed to list conversations: %v", s.botName, err)
+			return
+		}
+		for _, c := range channels {
+			nameToID[c.Name] = c.ID
+		}
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range toResolve {
+		cleaned := strings.TrimPrefix(name, "#")
+		if id, ok := nameToID[cleaned]; ok {
+			delete(s.channels, name)
+			s.channels[id] = struct{}{}
+			log.Printf("[slack:%s] resolved channel %q → %s", s.botName, name, id)
+		} else {
+			log.Printf("[slack:%s] could not resolve channel %q – keeping as-is", s.botName, name)
+		}
+	}
+}
+
+// isSlackChannelID returns true when s looks like a Slack channel/group/DM
+// identifier (e.g. "C0123ABCDEF", "G01AB2CD3EF", "D04EXAMPLE").
+func isSlackChannelID(s string) bool {
+	if len(s) < 9 {
+		return false
+	}
+	if s[0] != 'C' && s[0] != 'G' && s[0] != 'D' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z')) {
+			return false
+		}
+	}
+	return true
 }

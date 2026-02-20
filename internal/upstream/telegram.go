@@ -147,6 +147,7 @@ func (t *TelegramConnector) Run(ctx context.Context) {
 
 		backoff = time.Second
 		log.Printf("[telegram:%s] authenticated (bot_id=%d)", t.botName, t.selfBotID)
+		t.resolveChannelNames(ctx)
 		t.publishStatus("connector online")
 		t.pollLoop(ctx)
 	}
@@ -464,4 +465,76 @@ func resolveTelegramChat(request protocol.Request) string {
 	}
 
 	return target
+}
+
+// resolveChannelNames resolves any friendly channel references (e.g.
+// "@mychannel") to Telegram numeric chat IDs via the getChat API. Entries
+// that already look like numeric chat IDs are left unchanged.
+func (t *TelegramConnector) resolveChannelNames(ctx context.Context) {
+	t.mu.RLock()
+	var toResolve []string
+	for ch := range t.channels {
+		if !isTelegramChatID(ch) {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	t.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, name := range toResolve {
+		chatID, err := t.getChatID(ctx, name)
+		if err != nil {
+			log.Printf("[telegram:%s] could not resolve channel %q: %v – keeping as-is", t.botName, name, err)
+			continue
+		}
+		delete(t.channels, name)
+		resolved := strconv.FormatInt(chatID, 10)
+		t.channels[resolved] = struct{}{}
+		log.Printf("[telegram:%s] resolved channel %q → %s", t.botName, name, resolved)
+	}
+}
+
+func (t *TelegramConnector) getChatID(ctx context.Context, chatRef string) (int64, error) {
+	payload, err := json.Marshal(map[string]string{"chat_id": chatRef})
+	if err != nil {
+		return 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL+"/getChat", bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			ID int64 `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if !result.OK {
+		return 0, fmt.Errorf("getChat failed for %q", chatRef)
+	}
+	return result.Result.ID, nil
+}
+
+// isTelegramChatID returns true when s looks like a Telegram numeric chat ID
+// (a possibly-negative integer).
+func isTelegramChatID(s string) bool {
+	_, err := strconv.ParseInt(s, 10, 64)
+	return err == nil
 }

@@ -121,6 +121,9 @@ func (z *ZulipConnector) Run(ctx context.Context) {
 	}
 
 	log.Printf("[zulip:%s] authenticated (user_id=%d, email=%s)", z.botName, z.selfID, z.email)
+
+	z.resolveChannelNames(ctx)
+
 	z.publishStatus("connector online")
 
 	heartbeatTicker := time.NewTicker(45 * time.Second)
@@ -494,4 +497,69 @@ func resolveZulipChannel(request protocol.Request) string {
 	}
 
 	return target
+}
+
+// resolveChannelNames resolves any friendly stream names (e.g. "general",
+// "engineering") to Zulip numeric stream IDs by querying the get_stream_id
+// API. Entries that already look like numeric IDs are left unchanged.
+func (z *ZulipConnector) resolveChannelNames(ctx context.Context) {
+	z.mu.RLock()
+	var toResolve []string
+	for ch := range z.channels {
+		if !isZulipStreamID(ch) {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	z.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	for _, name := range toResolve {
+		streamID, err := z.getStreamID(ctx, name)
+		if err != nil {
+			log.Printf("[zulip:%s] could not resolve stream %q: %v – keeping as-is", z.botName, name, err)
+			continue
+		}
+		delete(z.channels, name)
+		resolved := strconv.FormatInt(streamID, 10)
+		z.channels[resolved] = struct{}{}
+		log.Printf("[zulip:%s] resolved stream %q → %s", z.botName, name, resolved)
+	}
+}
+
+func (z *ZulipConnector) getStreamID(ctx context.Context, name string) (int64, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/get_stream_id?stream=%s", z.endpoint, url.QueryEscape(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.SetBasicAuth(z.email, z.apiKey)
+
+	resp, err := z.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Result   string `json:"result"`
+		StreamID int64  `json:"stream_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if result.Result != "success" {
+		return 0, fmt.Errorf("get_stream_id failed for %q", name)
+	}
+	return result.StreamID, nil
+}
+
+// isZulipStreamID returns true when s looks like a Zulip numeric stream ID.
+func isZulipStreamID(s string) bool {
+	_, err := strconv.ParseInt(s, 10, 64)
+	return err == nil
 }

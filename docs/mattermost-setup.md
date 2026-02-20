@@ -71,8 +71,10 @@ bots:
     bot_token: $MATTERMOST_BOT_TOKEN
     endpoint: https://mattermost.example.com
     channels:
-      - a1b2c3d4e5f6g7h8i9j0klmnop    # replace with your channel ID
+      - town-square              # friendly name (resolved to channel ID at startup)
 ```
+
+Channels accept either friendly names (e.g. `town-square`, `off-topic`) or raw Mattermost IDs (26-character alphanumeric strings). Friendly names are resolved to IDs automatically when the daemon starts.
 
 > **Important:** The `endpoint` field is **required** for Mattermost (it's the only platform that needs it).
 
@@ -88,7 +90,7 @@ pantalk bots
 You should see your Mattermost bot listed. Send a test message:
 
 ```bash
-pantalk send --bot my-mattermost-bot --channel a1b2c3d4e5f6g7h8i9j0klmnop --text "Hello from Pantalk!"
+pantalk send --bot my-mattermost-bot --channel town-square --text "Hello from Pantalk!"
 ```
 
 ## Troubleshooting

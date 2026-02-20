@@ -99,6 +99,8 @@ func (m *MattermostConnector) Run(ctx context.Context) {
 
 	log.Printf("[mattermost:%s] authenticated (user=%s)", m.botName, m.selfUser)
 
+	m.resolveChannelNames(ctx)
+
 	m.publishStatus("connector online")
 
 	heartbeatTicker := time.NewTicker(45 * time.Second)
@@ -418,4 +420,118 @@ func resolveMattermostChannel(request protocol.Request) string {
 	}
 
 	return target
+}
+
+// resolveChannelNames resolves any friendly channel names (e.g. "town-square",
+// "off-topic") to Mattermost channel IDs by querying the REST API.
+// Entries that already look like Mattermost IDs are left unchanged.
+func (m *MattermostConnector) resolveChannelNames(ctx context.Context) {
+	m.mu.RLock()
+	var toResolve []string
+	for ch := range m.channels {
+		if !isMattermostChannelID(ch) {
+			toResolve = append(toResolve, ch)
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(toResolve) == 0 {
+		return
+	}
+
+	teamIDs, err := m.getTeamIDs(ctx)
+	if err != nil {
+		log.Printf("[mattermost:%s] channel resolution: failed to list teams: %v", m.botName, err)
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, name := range toResolve {
+		resolved := false
+		for _, teamID := range teamIDs {
+			if channelID, err := m.getChannelByName(ctx, teamID, name); err == nil {
+				delete(m.channels, name)
+				m.channels[channelID] = struct{}{}
+				log.Printf("[mattermost:%s] resolved channel %q → %s", m.botName, name, channelID)
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			log.Printf("[mattermost:%s] could not resolve channel %q – keeping as-is", m.botName, name)
+		}
+	}
+}
+
+func (m *MattermostConnector) getTeamIDs(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.endpoint+"/api/v4/users/me/teams", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("list teams: status %d", resp.StatusCode)
+	}
+
+	var teams []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(teams))
+	for i, t := range teams {
+		ids[i] = t.ID
+	}
+	return ids, nil
+}
+
+func (m *MattermostConnector) getChannelByName(ctx context.Context, teamID, name string) (string, error) {
+	reqURL := fmt.Sprintf("%s/api/v4/teams/%s/channels/name/%s", m.endpoint, teamID, url.PathEscape(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.token)
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("get channel by name: status %d", resp.StatusCode)
+	}
+
+	var ch struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ch); err != nil {
+		return "", err
+	}
+	return ch.ID, nil
+}
+
+// isMattermostChannelID returns true when s looks like a Mattermost channel
+// ID (a 26-character lowercase-alphanumeric string).
+func isMattermostChannelID(s string) bool {
+	if len(s) != 26 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'z')) {
+			return false
+		}
+	}
+	return true
 }
