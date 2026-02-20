@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Give your AI agent a voice on every chat platform.</strong><br/>
-  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, WhatsApp, and IRC through a single interface.
+  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, and Matrix through a single interface.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## The Problem
 
-AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp, IRC. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
 
 ## The Solution
 
@@ -31,19 +31,19 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
          │          │          │          │
        send      history    notify     stream
          │          │          │          │
-         └──────────┴──────┬───┴──────────┘
-                           │
+         └──────────┴─────┬────┴──────────┘
+                          │
                   Unix Domain Socket
                    (JSON protocol)
-                           │
-                     ┌─────┴─────┐
-                     │  pantalkd │
-                     │  (daemon) │
-                     └─────┬─────┘
-                           │
-         ┌─────────┬───────┼────────┬──────────┐
-         ▼         ▼       ▼        ▼          ▼
-       Slack  Discord  MM  Telegram  WhatsApp  IRC  ...
+                          │
+                    ┌─────┴─────┐
+                    │ pantalkd  │
+                    │ (daemon)  │
+                    └─────┬─────┘
+                          │
+        ┌─────────┬───────┼────────┬──────────┬────────┬────────┐
+        ▼         ▼       ▼        ▼          ▼        ▼        ▼
+      Slack    Discord   MM    Telegram  WhatsApp    IRC    Matrix  ...
 ```
 
 ## Why Pantalk
@@ -67,6 +67,7 @@ Pantalk gives your AI agent a single, consistent interface to all chat platforms
 | **Telegram**   | Bot API long-poll + sendMessage | ✅ Full support |
 | **WhatsApp**   | Web multi-device (whatsmeow)    | ✅ Full support |
 | **IRC**        | TCP/TLS + IRC protocol          | ✅ Full support |
+| **Matrix**     | Client-Server API (mautrix-go)  | ✅ Full support |
 
 ---
 
@@ -103,6 +104,7 @@ docs/
   telegram-setup.md      # Telegram platform setup guide
   whatsapp-setup.md      # WhatsApp platform setup guide
   irc-setup.md           # IRC platform setup guide
+  matrix-setup.md        # Matrix platform setup guide
   claude-code-hooks.md   # Claude Code hooks integration guide
 internal/
   client/                # Shared IPC client logic
@@ -274,6 +276,7 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 | Telegram   | Bot API long-poll | `sendMessage` |
 | WhatsApp   | Web multi-device  | `SendMessage` |
 | IRC        | TCP/TLS           | `PRIVMSG`     |
+| Matrix     | Client-Server API | REST API      |
 
 ### Persistence
 
@@ -339,6 +342,7 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | Telegram   | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)     |
 | WhatsApp   | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device        |
 | IRC        | [IRC Setup](docs/irc-setup.md)               | TCP/TLS                 |
+| Matrix     | [Matrix Setup](docs/matrix-setup.md)         | Client-Server API       |
 
 ---
 
