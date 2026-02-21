@@ -69,6 +69,10 @@ graph TD
 | **Twilio**     | REST API (polling + send)       | ✅ Full support |
 | **Zulip**      | REST API + Event Queue          | ✅ Full support |
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=pantalk/pantalk&type=date&legend=top-left)](https://www.star-history.com/#pantalk/pantalk&type=date&legend=top-left)
+
 ---
 
 ## Architecture
