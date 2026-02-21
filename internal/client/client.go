@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -27,6 +28,24 @@ func isTTY() bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// isStdinTTY returns true if stdin is connected to a terminal.
+func isStdinTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// readStdin reads all of stdin and returns the trimmed content.
+func readStdin() (string, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("read stdin: %w", err)
+	}
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 func Run(service string, toolName string, args []string) int {
@@ -180,7 +199,7 @@ func runSend(service string, args []string) int {
 	target := flags.String("target", "", "generic destination id (room/channel/user/thread root)")
 	channel := flags.String("channel", "", "channel destination id")
 	thread := flags.String("thread", "", "thread id")
-	text := flags.String("text", "", "message text")
+	text := flags.String("text", "", "message text (use - to read from stdin)")
 	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -192,8 +211,21 @@ func runSend(service string, args []string) int {
 		fmt.Fprintln(os.Stderr, "--bot is required")
 		return 2
 	}
-	if strings.TrimSpace(*text) == "" {
-		fmt.Fprintln(os.Stderr, "--text is required")
+
+	// Resolve message text: explicit flag, stdin sentinel (-), or implicit
+	// stdin when the flag is omitted and stdin is not a terminal.
+	messageText := *text
+	if messageText == "-" || (messageText == "" && !isStdinTTY()) {
+		stdinText, err := readStdin()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		messageText = stdinText
+	}
+
+	if strings.TrimSpace(messageText) == "" {
+		fmt.Fprintln(os.Stderr, "--text is required (or pass message via stdin)")
 		return 2
 	}
 	if strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
@@ -208,7 +240,7 @@ func runSend(service string, args []string) int {
 		Target:  *target,
 		Channel: *channel,
 		Thread:  *thread,
-		Text:    *text,
+		Text:    messageText,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -514,7 +546,7 @@ func printUsage(toolName string) {
 Messaging:
   %s bots%s [--json]
   %s status [--json]
-  %s send --bot NAME --text MESSAGE (--target ID | --channel ID | --thread ID)%s [--json]
+  %s send --bot NAME (--text MESSAGE | --text -) (--target ID | --channel ID | --thread ID)%s [--json]
   %s history [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--limit N] [--since ID] [--clear [--all]]%s [--json]
   %s notifications [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--unseen] [--limit N] [--since ID] [--clear [--all]]%s [--json]
   %s stream [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--timeout N]%s [--json]
