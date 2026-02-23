@@ -13,6 +13,9 @@ build:
 		CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $$cmd ./cmd/$$cmd; \
 	done
 
+fmt:
+	go fmt ./...
+
 test:
 	go test ./... -count=1
 

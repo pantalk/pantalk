@@ -30,10 +30,10 @@ type TwilioConnector struct {
 	publish     func(protocol.Event)
 	httpClient  *http.Client
 
-	mu            sync.RWMutex
-	channels      map[string]struct{}
-	lastPollTime  time.Time
-	seenMessages  map[string]struct{}
+	mu           sync.RWMutex
+	channels     map[string]struct{}
+	lastPollTime time.Time
+	seenMessages map[string]struct{}
 }
 
 type twilioMessageList struct {
@@ -41,13 +41,13 @@ type twilioMessageList struct {
 }
 
 type twilioMessage struct {
-	SID         string  `json:"sid"`
-	Body        string  `json:"body"`
-	From        string  `json:"from"`
-	To          string  `json:"to"`
-	Status      string  `json:"status"`
-	Direction   string  `json:"direction"`
-	DateCreated string  `json:"date_created"`
+	SID         string `json:"sid"`
+	Body        string `json:"body"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Status      string `json:"status"`
+	Direction   string `json:"direction"`
+	DateCreated string `json:"date_created"`
 }
 
 type twilioSendResponse struct {
@@ -418,5 +418,5 @@ func parseTwilioDate(dateStr string) time.Time {
 
 // React is not supported by the Twilio connector.
 func (t *TwilioConnector) React(_ context.Context, _ protocol.Request) error {
-return fmt.Errorf("reactions are not supported by the twilio connector")
+	return fmt.Errorf("reactions are not supported by the twilio connector")
 }

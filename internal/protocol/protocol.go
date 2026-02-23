@@ -34,13 +34,13 @@ type Request struct {
 }
 
 type Response struct {
-	OK      bool         `json:"ok"`
-	Error   string       `json:"error,omitempty"`
-	Ack     string       `json:"ack,omitempty"`
-	Bots    []BotRef     `json:"bots,omitempty"`
-	Events  []Event      `json:"events,omitempty"`
-	Event   *Event       `json:"event,omitempty"`
-	Cleared int64        `json:"cleared,omitempty"`
+	OK      bool          `json:"ok"`
+	Error   string        `json:"error,omitempty"`
+	Ack     string        `json:"ack,omitempty"`
+	Bots    []BotRef      `json:"bots,omitempty"`
+	Events  []Event       `json:"events,omitempty"`
+	Event   *Event        `json:"event,omitempty"`
+	Cleared int64         `json:"cleared,omitempty"`
 	Status  *DaemonStatus `json:"status,omitempty"`
 }
 

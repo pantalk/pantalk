@@ -362,5 +362,5 @@ func resolveWhatsAppJID(request protocol.Request) (types.JID, error) {
 
 // React is not supported by the WhatsApp connector.
 func (w *WhatsAppConnector) React(_ context.Context, _ protocol.Request) error {
-return fmt.Errorf("reactions are not supported by the whatsapp connector")
+	return fmt.Errorf("reactions are not supported by the whatsapp connector")
 }

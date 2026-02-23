@@ -535,7 +535,8 @@ func isMattermostChannelID(s string) bool {
 	}
 	return true
 }
+
 // React is not supported by the Mattermost connector.
 func (m *MattermostConnector) React(_ context.Context, _ protocol.Request) error {
-return fmt.Errorf("reactions are not supported by the mattermost connector")
+	return fmt.Errorf("reactions are not supported by the mattermost connector")
 }

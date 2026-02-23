@@ -21,11 +21,11 @@ import (
 // and uses the /sync long-poll loop to receive room events. Messages are sent
 // via the client-server REST API.
 type MatrixConnector struct {
-	serviceName  string
-	botName      string
+	serviceName   string
+	botName       string
 	homeserverURL string
-	accessToken  string
-	publish      func(protocol.Event)
+	accessToken   string
+	publish       func(protocol.Event)
 
 	mu       sync.RWMutex
 	client   *mautrix.Client
@@ -45,12 +45,12 @@ func NewMatrixConnector(bot config.BotConfig, publish func(protocol.Event)) (*Ma
 	}
 
 	connector := &MatrixConnector{
-		serviceName:  bot.Type,
-		botName:      bot.Name,
+		serviceName:   bot.Type,
+		botName:       bot.Name,
 		homeserverURL: homeserver,
-		accessToken:  token,
-		publish:      publish,
-		channels:     make(map[string]struct{}),
+		accessToken:   token,
+		publish:       publish,
+		channels:      make(map[string]struct{}),
 	}
 
 	for _, ch := range bot.Channels {
@@ -341,5 +341,5 @@ func (m *MatrixConnector) resolveChannelNames(ctx context.Context) {
 
 // React is not supported by the Matrix connector.
 func (m *MatrixConnector) React(_ context.Context, _ protocol.Request) error {
-return fmt.Errorf("reactions are not supported by the matrix connector")
+	return fmt.Errorf("reactions are not supported by the matrix connector")
 }

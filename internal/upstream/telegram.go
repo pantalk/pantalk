@@ -538,7 +538,8 @@ func isTelegramChatID(s string) bool {
 	_, err := strconv.ParseInt(s, 10, 64)
 	return err == nil
 }
+
 // React is not supported by the Telegram connector.
 func (t *TelegramConnector) React(_ context.Context, _ protocol.Request) error {
-return fmt.Errorf("reactions are not supported by the telegram connector")
+	return fmt.Errorf("reactions are not supported by the telegram connector")
 }
