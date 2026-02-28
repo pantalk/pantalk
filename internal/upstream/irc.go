@@ -60,7 +60,7 @@ func NewIRCConnector(bot config.BotConfig, publish func(protocol.Event)) (*IRCCo
 	useTLS := false
 	_, port, err := net.SplitHostPort(endpoint)
 	if err != nil {
-		// No port specified — add default TLS port.
+		// No port specified - add default TLS port.
 		endpoint = endpoint + ":" + defaultIRCSPort
 		useTLS = true
 	} else if port == defaultIRCSPort {
@@ -194,7 +194,7 @@ func (c *IRCConnector) handleLine(line string) {
 	prefix, command, params := parseIRCMessage(line)
 
 	switch command {
-	case "001": // RPL_WELCOME — registration complete, join channels.
+	case "001": // RPL_WELCOME - registration complete, join channels.
 		c.joinChannels()
 
 	case "PRIVMSG":
@@ -243,7 +243,7 @@ func (c *IRCConnector) handlePrivmsg(prefix string, params []string) {
 	channel := target
 	isDirect := false
 	if !strings.HasPrefix(target, "#") && !strings.HasPrefix(target, "&") {
-		// Direct message — target is our nick.
+		// Direct message - target is our nick.
 		channel = "dm:" + sender
 		isDirect = true
 	}
@@ -444,7 +444,7 @@ func prepareIRCSegments(format string, text string) ([]string, error) {
 		trimmed = formatting.StripHTML(trimmed)
 	}
 
-	// Split on newlines — each line becomes a separate PRIVMSG because the
+	// Split on newlines - each line becomes a separate PRIVMSG because the
 	// IRC protocol does not support multi-line messages.
 	lines := strings.Split(trimmed, "\n")
 	var segments []string

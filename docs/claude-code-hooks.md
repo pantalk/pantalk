@@ -4,7 +4,7 @@ This guide shows how to connect Claude Code's [hooks system](https://code.claude
 
 ## What This Enables
 
-Claude Code hooks are shell commands that run at specific points in Claude's lifecycle. Since Pantalk is a CLI tool, it slots in directly — no glue code or SDKs needed.
+Claude Code hooks are shell commands that run at specific points in Claude's lifecycle. Since Pantalk is a CLI tool, it slots in directly - no glue code or SDKs needed.
 
 | Hook Event       | What Pantalk Does                                                    |
 | ---------------- | -------------------------------------------------------------------- |
@@ -46,7 +46,7 @@ All scripts below use the `PANTALK_BOT` and `PANTALK_CHANNEL` environment variab
 
 ## Hook 1: Forward Notifications to Chat
 
-When Claude Code needs your attention — a permission prompt, an idle timeout — this hook sends the notification to your chat channel so you don't have to watch the terminal.
+When Claude Code needs your attention - a permission prompt, an idle timeout - this hook sends the notification to your chat channel so you don't have to watch the terminal.
 
 ### Script
 
@@ -105,7 +105,7 @@ chmod +x .claude/hooks/notify-chat.sh
 }
 ```
 
-The `async: true` flag is important here — notifications should not block Claude's work.
+The `async: true` flag is important here - notifications should not block Claude's work.
 
 ---
 

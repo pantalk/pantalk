@@ -138,7 +138,7 @@ func runStatus(service string, args []string) int {
 		return 2
 	}
 
-	_ = service // status is global — no service filter
+	_ = service // status is global - no service filter
 
 	resp, err := call(*socket, protocol.Request{Action: protocol.ActionStatus})
 	if err != nil {
@@ -175,6 +175,9 @@ func runStatus(service string, args []string) int {
 	fmt.Printf("agents:  %d\n", len(st.Agents))
 	for _, a := range st.Agents {
 		fmt.Printf("  %-20s  when: %s\n", a.Name, a.When)
+	}
+	if st.Notifications != nil {
+		fmt.Printf("notifications: total=%d unseen=%d\n", st.Notifications.Total, st.Notifications.Unseen)
 	}
 
 	return 0

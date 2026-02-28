@@ -1,13 +1,13 @@
 # WhatsApp Setup
 
-Pantalk connects to WhatsApp using the **Web multi-device protocol** (via [whatsmeow](https://github.com/tulir/whatsmeow)). No WhatsApp Business account, API keys, or public server are required — you pair by scanning a QR code printed directly in your terminal, just like linking WhatsApp Web.
+Pantalk connects to WhatsApp using the **Web multi-device protocol** (via [whatsmeow](https://github.com/tulir/whatsmeow)). No WhatsApp Business account, API keys, or public server are required - you pair by scanning a QR code printed directly in your terminal, just like linking WhatsApp Web.
 
 ## Prerequisites
 
 - A phone with WhatsApp installed and an active account
 - Your Pantalk binaries installed (`pantalk` and `pantalkd`)
 
-## Step 1 — Add the Bot to Your Config
+## Step 1 - Add the Bot to Your Config
 
 Add a WhatsApp bot entry. No tokens or credentials are needed upfront:
 
@@ -36,7 +36,7 @@ bots:
       - '12345678-9876543@g.us'           # group chat
 ```
 
-## Step 2 — Pair via QR Code
+## Step 2 - Pair via QR Code
 
 Pair your WhatsApp account by scanning a QR code. This can be done before or while the daemon is running:
 
@@ -68,9 +68,9 @@ Open WhatsApp on your phone:
 
 > **Note:** The QR code expires after about 60 seconds. If it times out, run the command again.
 
-## Step 3 — Connect the Daemon
+## Step 3 - Connect the Daemon
 
-If the daemon is already running, `pantalk pair` automatically reloads it after a successful pair — no extra step needed.
+If the daemon is already running, `pantalk pair` automatically reloads it after a successful pair - no extra step needed.
 
 If the daemon isn't running yet, start it:
 
@@ -89,7 +89,7 @@ The session stays valid as long as:
 - You don't unlink the device from your phone (**Linked Devices → tap the device → Log Out**)
 - You don't delete the whatsmeow database file
 
-## Step 4 — Find Chat IDs (JIDs)
+## Step 4 - Find Chat IDs (JIDs)
 
 WhatsApp uses JIDs (Jabber IDs) to identify chats:
 
@@ -123,7 +123,7 @@ pantalk send --bot my-whatsapp --channel 1234567890@s.whatsapp.net --text "Hello
 pantalk send --bot my-whatsapp --channel 12345678-9876543@g.us --text "Hello group!"
 ```
 
-You can also use shorthand channel IDs — the connector auto-detects whether it's a group or personal chat:
+You can also use shorthand channel IDs - the connector auto-detects whether it's a group or personal chat:
 
 ```bash
 # Personal (plain phone number → @s.whatsapp.net)
@@ -146,9 +146,9 @@ pantalk pair --bot my-whatsapp   # scan QR again
 
 | Symptom                           | Cause                                                                                   |
 | --------------------------------- | --------------------------------------------------------------------------------------- |
-| QR code looks garbled             | Terminal font may not support Unicode block characters — try a different terminal        |
-| QR code timed out                 | Expired after ~60s — run `pantalk pair --bot <name>` again                  |
-| `logged out — restart to re-pair` | Session was revoked from phone — delete the db file and restart                         |
-| Connected but no messages         | Channel filter is active — remove `channels` to receive all, or check JIDs              |
-| Messages from self are ignored    | By design — the connector skips messages sent by the linked account                     |
+| QR code looks garbled             | Terminal font may not support Unicode block characters - try a different terminal        |
+| QR code timed out                 | Expired after ~60s - run `pantalk pair --bot <name>` again                  |
+| `logged out - restart to re-pair` | Session was revoked from phone - delete the db file and restart                         |
+| Connected but no messages         | Channel filter is active - remove `channels` to receive all, or check JIDs              |
+| Messages from self are ignored    | By design - the connector skips messages sent by the linked account                     |
 | Only text messages appear         | Media files are not forwarded; only text, captions, and quoted-text are extracted        |

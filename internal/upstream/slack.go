@@ -220,7 +220,7 @@ func (s *SlackConnector) Send(ctx context.Context, request protocol.Request) (pr
 }
 
 // React adds an emoji reaction to a message. Channel and Thread (message
-// timestamp) are required. Strip surrounding colons from emoji names — both
+// timestamp) are required. Strip surrounding colons from emoji names - both
 // "white_check_mark" and ":white_check_mark:" are accepted.
 func (s *SlackConnector) React(ctx context.Context, request protocol.Request) error {
 	emoji := strings.Trim(request.Emoji, ":")

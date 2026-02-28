@@ -1,10 +1,13 @@
 package server
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pantalk/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/store"
 	"github.com/pantalk/pantalk/internal/upstream"
 )
 
@@ -350,5 +353,68 @@ func TestHandleRequest_React_UnknownBot(t *testing.T) {
 
 	if resp.OK {
 		t.Fatal("expected error response for unknown connector")
+	}
+}
+
+func TestDaemonStatus_IncludesNotificationBacklog(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "pantalk-status.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	ev := protocol.Event{
+		Timestamp: time.Now().UTC(),
+		Service:   "slack",
+		Bot:       "ops-bot",
+		Kind:      "message",
+		Direction: "in",
+		Notify:    true,
+		Channel:   "C1",
+		Text:      "first",
+	}
+	evID, err := st.InsertEvent(ev)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+	ev.ID = evID
+	firstNotificationID, err := st.InsertNotification(ev)
+	if err != nil {
+		t.Fatalf("insert notification: %v", err)
+	}
+
+	ev.Text = "second"
+	ev.Timestamp = time.Now().UTC()
+	evID, err = st.InsertEvent(ev)
+	if err != nil {
+		t.Fatalf("insert event #2: %v", err)
+	}
+	ev.ID = evID
+	if _, err := st.InsertNotification(ev); err != nil {
+		t.Fatalf("insert notification #2: %v", err)
+	}
+
+	if _, err := st.MarkSeenByID(firstNotificationID); err != nil {
+		t.Fatalf("mark seen: %v", err)
+	}
+
+	s := &Server{
+		startedAt:      time.Now().Add(-time.Minute),
+		notifications:  st,
+		bots:           make(map[string]protocol.BotRef),
+		connectors:     make(map[string]upstream.Connector),
+		routesByBot:    make(map[string]map[string]struct{}),
+		subsByBot:      make(map[string]map[chan protocol.Event]struct{}),
+	}
+
+	status := s.daemonStatus()
+	if status.Notifications == nil {
+		t.Fatal("expected notifications backlog in status")
+	}
+	if status.Notifications.Total != 2 {
+		t.Fatalf("expected total=2, got %d", status.Notifications.Total)
+	}
+	if status.Notifications.Unseen != 1 {
+		t.Fatalf("expected unseen=1, got %d", status.Notifications.Unseen)
 	}
 }

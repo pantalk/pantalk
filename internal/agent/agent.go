@@ -3,7 +3,7 @@
 // When notifications arrive for a configured bot, the runner evaluates a
 // "when" expression against the event. Matching events are buffered for a
 // configurable window, then the runner exec's a preconfigured command. The
-// command is never interpreted by a shell — it is exec'd directly from an
+// command is never interpreted by a shell - it is exec'd directly from an
 // argv slice. Unless the daemon is started with --allow-exec, only known
 // agent binaries (claude, codex, aider, goose) are permitted.
 //
@@ -42,7 +42,7 @@ var AllowedCommands = map[string]bool{
 type Config struct {
 	Name     string  `yaml:"name"`
 	When     string  `yaml:"when"`     // expr expression evaluated against each event
-	Command  Command `yaml:"command"`  // argv — string or []string, exec'd directly
+	Command  Command `yaml:"command"`  // argv - string or []string, exec'd directly
 	Workdir  string  `yaml:"workdir"`  // optional working directory
 	Buffer   int     `yaml:"buffer"`   // seconds to batch notifications (default 30)
 	Timeout  int     `yaml:"timeout"`  // max runtime in seconds (default 120)
@@ -64,13 +64,13 @@ type exprEnv struct {
 	User     string `expr:"user"`
 	Text     string `expr:"text"`
 
-	// Time fields — populated on tick events, zero on message events.
+	// Time fields - populated on tick events, zero on message events.
 	Tick    bool   `expr:"tick"`
 	Hour    int    `expr:"hour"`
 	Minute  int    `expr:"minute"`
 	Weekday string `expr:"weekday"` // "mon", "tue", "wed", "thu", "fri", "sat", "sun"
 
-	// Time functions — set to closures that capture the env's time fields.
+	// Time functions - set to closures that capture the env's time fields.
 	// Exposed as at() and every() in expressions via expr tags.
 	AtFn    func(times ...string) (bool, error) `expr:"at"`
 	EveryFn func(interval string) (bool, error) `expr:"every"`
@@ -287,7 +287,7 @@ func (r *Runner) Handle(event protocol.Event) {
 
 	r.pending = append(r.pending, event)
 
-	// If a timer is already ticking, let it fire — additional events just
+	// If a timer is already ticking, let it fire - additional events just
 	// accumulate in the pending buffer.
 	if r.timer != nil {
 		return
@@ -337,7 +337,7 @@ func (r *Runner) flush() {
 }
 
 // run executes the agent command. The command is responsible for reading
-// notifications via the pantalk CLI — no events are passed on stdin.
+// notifications via the pantalk CLI - no events are passed on stdin.
 func (r *Runner) run(triggerCount int) {
 	defer func() {
 		r.mu.Lock()
@@ -356,7 +356,7 @@ func (r *Runner) run(triggerCount int) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.cfg.Timeout)*time.Second)
 	defer cancel()
 
-	// Direct exec — no shell interpretation.
+	// Direct exec - no shell interpretation.
 	cmd := exec.CommandContext(ctx, r.cfg.Command[0], r.cfg.Command[1:]...)
 
 	if r.cfg.Workdir != "" {

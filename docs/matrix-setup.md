@@ -1,6 +1,6 @@
 # Matrix Setup
 
-Pantalk connects to Matrix using the **Client-Server API** (via [mautrix-go](https://github.com/mautrix/go)). It authenticates with an access token and receives messages through the `/sync` long-poll endpoint — no webhooks or public URLs are needed.
+Pantalk connects to Matrix using the **Client-Server API** (via [mautrix-go](https://github.com/mautrix/go)). It authenticates with an access token and receives messages through the `/sync` long-poll endpoint - no webhooks or public URLs are needed.
 
 ## Prerequisites
 
@@ -8,17 +8,17 @@ Pantalk connects to Matrix using the **Client-Server API** (via [mautrix-go](htt
 - An access token for the account
 - Your Pantalk binaries installed (`pantalk` and `pantalkd`)
 
-## Step 1 — Create a Matrix Account
+## Step 1 - Create a Matrix Account
 
 Use any Matrix client (e.g. [Element](https://element.io)) to create a dedicated bot account, or use an existing one.
 
 For a self-hosted homeserver you can register via the admin API or `register_new_matrix_user` command.
 
-## Step 2 — Obtain an Access Token
+## Step 2 - Obtain an Access Token
 
 There are several ways to get an access token:
 
-### Option A — From Element
+### Option A - From Element
 
 1. Log in to [Element Web](https://app.element.io)
 2. Go to **Settings → Help & About → Advanced**
@@ -26,7 +26,7 @@ There are several ways to get an access token:
 
 > **Warning:** Logging out of Element invalidates the token. Use a dedicated session for bot accounts.
 
-### Option B — Via the API
+### Option B - Via the API
 
 ```bash
 curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
@@ -39,15 +39,15 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
   }'
 ```
 
-The response contains `access_token` — save this value.
+The response contains `access_token` - save this value.
 
-## Step 3 — Invite the Bot to Rooms
+## Step 3 - Invite the Bot to Rooms
 
 In your Matrix client, invite the bot user to the rooms where it should listen and respond.
 
 The bot will receive messages from all joined rooms unless you configure a `channels` allowlist.
 
-## Step 4 — Get Room IDs
+## Step 4 - Get Room IDs
 
 Room IDs look like `!abc123:matrix.org`. You can find them in Element:
 
@@ -55,7 +55,7 @@ Room IDs look like `!abc123:matrix.org`. You can find them in Element:
 2. Go to **Room Settings → Advanced**
 3. The **Internal room ID** is displayed (e.g. `!opaque_id:matrix.org`)
 
-## Step 5 — Configure Pantalk
+## Step 5 - Configure Pantalk
 
 Set your environment variable:
 

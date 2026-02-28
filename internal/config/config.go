@@ -51,7 +51,7 @@ type BotConfig struct {
 type AgentConfig struct {
 	Name     string        `yaml:"name"`
 	When     string        `yaml:"when"`     // expr expression evaluated against each event (default: "notify")
-	Command  agent.Command `yaml:"command"`  // string or []string — exec'd directly, never via shell
+	Command  agent.Command `yaml:"command"`  // string or []string - exec'd directly, never via shell
 	Workdir  string        `yaml:"workdir"`  // working directory (optional)
 	Buffer   int           `yaml:"buffer"`   // seconds to batch events before launching (default 30)
 	Timeout  int           `yaml:"timeout"`  // max runtime in seconds (default 120)
@@ -169,7 +169,7 @@ func validate(cfg Config, allowExec bool) error {
 				return fmt.Errorf("bot %q requires bot_token", bot.Name)
 			}
 		case "whatsapp":
-			// No credentials required — authentication is handled via QR code
+			// No credentials required - authentication is handled via QR code
 			// pairing at first startup. The optional endpoint field overrides
 			// the default whatsmeow database path.
 		case "irc":
@@ -197,7 +197,7 @@ func validate(cfg Config, allowExec bool) error {
 				return fmt.Errorf("bot %q requires bot_email (Zulip bot email)", bot.Name)
 			}
 		case "imessage":
-			// Native macOS integration — no credentials required. The
+			// Native macOS integration - no credentials required. The
 			// connector reads ~/Library/Messages/chat.db directly and
 			// sends via AppleScript. db_path is optional (defaults to
 			// ~/Library/Messages/chat.db).

@@ -213,7 +213,7 @@ func TestCommand_Tokenize_EmptyQuotedStrings(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Empty double-quoted string produces an empty token appended to previous
-	// Actually: "claude", "-p", "" — but tokenize joins adjacent chars.
+	// Actually: "claude", "-p", "" - but tokenize joins adjacent chars.
 	// The empty quote contributes zero bytes to current, but since -p has a
 	// space after it and the empty string follows, the empty string token may
 	// or may not be emitted depending on implementation. Let's just check no error.

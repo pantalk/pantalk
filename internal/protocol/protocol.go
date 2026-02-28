@@ -49,10 +49,17 @@ type Response struct {
 // the "status" action. It is designed to be consumed by agents and operators
 // who need to quickly verify that pantalkd is healthy.
 type DaemonStatus struct {
-	StartedAt time.Time   `json:"started_at"`
-	UptimeSec int64       `json:"uptime_sec"`
-	Bots      []BotStatus `json:"bots"`
-	Agents    []AgentInfo `json:"agents"`
+	StartedAt     time.Time      `json:"started_at"`
+	UptimeSec     int64          `json:"uptime_sec"`
+	Bots          []BotStatus    `json:"bots"`
+	Agents        []AgentInfo    `json:"agents"`
+	Notifications *NotifyBacklog `json:"notifications,omitempty"`
+}
+
+// NotifyBacklog summarizes pending and total notifications in the local store.
+type NotifyBacklog struct {
+	Total  int64 `json:"total"`
+	Unseen int64 `json:"unseen"`
 }
 
 // BotStatus describes a single configured bot.

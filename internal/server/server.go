@@ -492,8 +492,6 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 // daemonStatus returns a snapshot of the daemon's current runtime state.
 func (s *Server) daemonStatus() *protocol.DaemonStatus {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	bots := make([]protocol.BotStatus, 0, len(s.bots))
 	for _, bot := range s.bots {
 		bots = append(bots, protocol.BotStatus{
@@ -526,13 +524,28 @@ func (s *Server) daemonStatus() *protocol.DaemonStatus {
 	if !s.startedAt.IsZero() {
 		uptime = int64(now.Sub(s.startedAt).Seconds())
 	}
+	startedAt := s.startedAt
+	notifications := s.notifications
+	s.mu.RUnlock()
 
-	return &protocol.DaemonStatus{
-		StartedAt: s.startedAt,
+	status := &protocol.DaemonStatus{
+		StartedAt: startedAt,
 		UptimeSec: uptime,
 		Bots:      bots,
 		Agents:    agents,
 	}
+
+	if notifications != nil {
+		stats, err := notifications.NotificationStats()
+		if err == nil {
+			status.Notifications = &protocol.NotifyBacklog{
+				Total:  stats.Total,
+				Unseen: stats.Unseen,
+			}
+		}
+	}
+
+	return status
 }
 
 func (s *Server) listBots(service string) []protocol.BotRef {

@@ -375,7 +375,7 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ## See Also
 
-**[mcpshim](https://github.com/mcpshim/mcpshim)** — Turn remote MCP servers into local command workflows. Pantalk gives your agent a voice; mcpshim gives it tools. Together they form a complete agent infrastructure stack.
+**[MCPShim](https://github.com/mcpshim/mcpshim)** - Use any MCP server as a standard CLI command. Pantalk gives your agent a voice; MCPShim gives it tools. Together they form a complete agent infrastructure stack.
 
 ---
 

@@ -53,7 +53,7 @@ func runPair(args []string) error {
 		return fmt.Errorf("bot %q not found in config", *botName)
 	}
 	if bot.Type != "whatsapp" {
-		return fmt.Errorf("bot %q is type %q — pair is only for whatsapp bots", *botName, bot.Type)
+		return fmt.Errorf("bot %q is type %q - pair is only for whatsapp bots", *botName, bot.Type)
 	}
 
 	dbPath := strings.TrimSpace(bot.DBPath)
@@ -115,19 +115,19 @@ func runPair(args []string) error {
 			fmt.Fprintf(os.Stderr, "paired successfully! credentials saved to %s\n", dbPath)
 
 			// Try to reload the daemon so it picks up credentials immediately.
-			// This is best-effort — the daemon may not be running yet.
+			// This is best-effort - the daemon may not be running yet.
 			socketPath := cfg.Server.SocketPath
 			if socketPath == "" {
 				socketPath = defaultSocketPath
 			}
 			resp, err := call(socketPath, protocol.Request{Action: protocol.ActionReload})
 			if err == nil && resp.OK {
-				fmt.Fprintln(os.Stderr, "daemon reloaded — connecting now")
+				fmt.Fprintln(os.Stderr, "daemon reloaded - connecting now")
 			}
 
 			return nil
 		case "timeout":
-			return fmt.Errorf("QR code timed out — run this command again to retry")
+			return fmt.Errorf("QR code timed out - run this command again to retry")
 		}
 	}
 

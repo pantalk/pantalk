@@ -1,6 +1,6 @@
 # iMessage Setup
 
-Pantalk connects to iMessage natively on macOS. It reads incoming messages directly from the Messages database (`~/Library/Messages/chat.db`) and sends outbound messages via AppleScript through Messages.app. No third-party servers or tools are required — just a Mac with Messages signed in.
+Pantalk connects to iMessage natively on macOS. It reads incoming messages directly from the Messages database (`~/Library/Messages/chat.db`) and sends outbound messages via AppleScript through Messages.app. No third-party servers or tools are required - just a Mac with Messages signed in.
 
 ## Prerequisites
 
@@ -9,7 +9,7 @@ Pantalk connects to iMessage natively on macOS. It reads incoming messages direc
 - **Automation** permission for Messages.app (granted automatically on first send)
 - Your Pantalk binaries installed (`pantalk` and `pantalkd`)
 
-## Step 1 — Grant Permissions
+## Step 1 - Grant Permissions
 
 ### Full Disk Access
 
@@ -23,7 +23,7 @@ Pantalk reads `~/Library/Messages/chat.db` directly. macOS requires Full Disk Ac
 
 The first time Pantalk sends a message, macOS will prompt you to allow it to control Messages.app. Click **OK** to grant the permission. You can also pre-grant this in **System Settings → Privacy & Security → Automation**.
 
-## Step 2 — Configure Pantalk
+## Step 2 - Configure Pantalk
 
 Add the bot to your Pantalk config:
 
@@ -33,7 +33,7 @@ bots:
     type: imessage
 ```
 
-That's it — no credentials needed. The connector defaults to reading from `~/Library/Messages/chat.db`.
+That's it - no credentials needed. The connector defaults to reading from `~/Library/Messages/chat.db`.
 
 ### Config Fields
 
@@ -69,7 +69,7 @@ bots:
       - 'chat123456789'           # group chat ID
 ```
 
-## Step 3 — Verify
+## Step 3 - Verify
 
 Start the daemon and confirm the bot connects:
 
@@ -98,7 +98,7 @@ Pantalk sends messages via AppleScript (`osascript`) using the `tell application
 
 | Symptom                                   | Cause                                                                              |
 | ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| `cannot open database` or `not permitted` | Full Disk Access not granted — add your terminal/binary in System Settings         |
+| `cannot open database` or `not permitted` | Full Disk Access not granted - add your terminal/binary in System Settings         |
 | `database check failed`                   | Messages.app not signed in or `chat.db` does not exist                             |
 | Connected but no messages                 | Messages arrive with a 2s polling delay; also check channel filters                |
 | `imessage send failed`                    | Automation permission not granted for Messages.app, or Messages is not running     |

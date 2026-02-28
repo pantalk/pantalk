@@ -1,6 +1,6 @@
 # Agents
 
-Pantalk can automatically launch AI agents when matching notifications arrive. Instead of polling for new messages, you define agents in your config and `pantalkd` triggers them reactively — buffering events, enforcing cooldowns, and restricting which binaries can run.
+Pantalk can automatically launch AI agents when matching notifications arrive. Instead of polling for new messages, you define agents in your config and `pantalkd` triggers them reactively - buffering events, enforcing cooldowns, and restricting which binaries can run.
 
 Agents are **fire-and-forget**. When triggered, the command runs and reads notifications itself via `pantalk notifications`. No events are piped to stdin.
 
@@ -28,10 +28,10 @@ Each agent is defined under the `agents` key in your config:
 
 ```yaml
 agents:
-  - name: responder              # required — unique identifier
+  - name: responder              # required - unique identifier
     when: "direct || mentions"   # expression (default: "notify")
     command: claude -p "Check notifications"  # required
-    workdir: /home/user/project  # optional — inherits daemon's cwd
+    workdir: /home/user/project  # optional - inherits daemon's cwd
     buffer: 30                   # seconds to batch events (default: 30)
     timeout: 120                 # kill after N seconds (default: 120)
     cooldown: 60                 # min gap between runs (default: 60)
@@ -41,9 +41,9 @@ agents:
 
 | Field      | Required | Default    | Description                                               |
 | ---------- | -------- | ---------- | --------------------------------------------------------- |
-| `name`     | yes      | —          | Unique identifier, used in log messages                   |
+| `name`     | yes      | -          | Unique identifier, used in log messages                   |
 | `when`     | no       | `"notify"` | Boolean expression evaluated against each event           |
-| `command`  | yes      | —          | Binary + args to exec (string or array)                   |
+| `command`  | yes      | -          | Binary + args to exec (string or array)                   |
 | `workdir`  | no       | daemon cwd | Working directory for the command                         |
 | `buffer`   | no       | `30`       | Seconds to wait and batch events before launching         |
 | `timeout`  | no       | `120`      | Maximum runtime in seconds before the process is killed   |
@@ -51,13 +51,13 @@ agents:
 
 ### Command Format
 
-The `command` field accepts both a string and an array. It is **exec'd directly** — never passed through a shell.
+The `command` field accepts both a string and an array. It is **exec'd directly** - never passed through a shell.
 
 ```yaml
-# String form — tokenized with shell-like quoting (no variable expansion)
+# String form - tokenized with shell-like quoting (no variable expansion)
 command: claude -p "Check pantalk notifications and respond"
 
-# Array form — each element is a separate argv entry
+# Array form - each element is a separate argv entry
 command:
   - claude
   - -p
@@ -72,7 +72,7 @@ The `when` field uses the [expr](https://github.com/expr-lang/expr) expression l
 
 ### Available Fields
 
-**Event fields** — populated on message events, zero on tick events:
+**Event fields** - populated on message events, zero on tick events:
 
 | Field      | Type   | Description                                      |
 | ---------- | ------ | ------------------------------------------------ |
@@ -86,7 +86,7 @@ The `when` field uses the [expr](https://github.com/expr-lang/expr) expression l
 | `user`     | string | User ID of the message author                    |
 | `text`     | string | Message text content                             |
 
-**Time fields** — populated on tick events (1-minute internal clock), zero on message events:
+**Time fields** - populated on tick events (1-minute internal clock), zero on message events:
 
 | Field      | Type   | Description                                      |
 | ---------- | ------ | ------------------------------------------------ |
@@ -119,7 +119,7 @@ The `when` field uses the [expr](https://github.com/expr-lang/expr) expression l
 ### Examples
 
 ```yaml
-# Default — trigger on any notification
+# Default - trigger on any notification
 when: "notify"
 
 # Only direct messages
@@ -161,7 +161,7 @@ when: "notify && !direct"
 ```yaml
 # Run at specific times
 when: 'at("9:00")'
-when: 'at("9:00", "12:30", "17:00")'    # variadic — multiple times
+when: 'at("9:00", "12:30", "17:00")'    # variadic - multiple times
 
 # Run on intervals
 when: 'every("15m")'                     # :00, :15, :30, :45
@@ -174,12 +174,12 @@ when: 'at("9:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
 # Business hours only
 when: 'every("15m") && hour >= 9 && hour < 17'
 
-# Mix time + events — wake on schedule OR when someone DMs
+# Mix time + events - wake on schedule OR when someone DMs
 when: 'at("9:00", "17:00") || direct'
 when: 'every("30m") || mentions'
 ```
 
-Time expressions only fire on the daemon's internal 1-minute clock. The default `when: "notify"` does **not** match clock ticks — you must explicitly use `at()`, `every()`, or the `tick` field.
+Time expressions only fire on the daemon's internal 1-minute clock. The default `when: "notify"` does **not** match clock ticks - you must explicitly use `at()`, `every()`, or the `tick` field.
 
 ## Security
 
@@ -211,14 +211,14 @@ To run arbitrary commands, start the daemon with the `--allow-exec` flag:
 pantalkd --allow-exec
 ```
 
-This bypasses the binary allowlist entirely. Use with caution — the command has the same privileges as the `pantalkd` process.
+This bypasses the binary allowlist entirely. Use with caution - the command has the same privileges as the `pantalkd` process.
 
 ### Path-qualified binaries
 
 Full paths are supported. The binary name is extracted for allowlist checking:
 
 ```yaml
-# Allowed — filepath.Base extracts "claude"
+# Allowed - filepath.Base extracts "claude"
 command: /usr/local/bin/claude -p "Check notifications"
 ```
 
@@ -243,7 +243,7 @@ Handle(event)           ← event buffered
     │
     ▼
   ┌─────────────┐
-  │ Buffer timer │  (default 30s — batches rapid events)
+  │ Buffer timer │  (default 30s - batches rapid events)
   └──────┬──────┘
          ▼
   ┌──────────────┐
@@ -326,14 +326,14 @@ agents:
       - --check
     workdir: /home/user/repos
 
-  # Morning digest — weekdays at 9 AM
+  # Morning digest - weekdays at 9 AM
   - name: morning-digest
     when: 'at("9:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
     command: claude -p "Summarize overnight pantalk notifications"
     workdir: /home/user/project
     timeout: 300
 
-  # Periodic check + DM trigger — every 30 min OR direct message
+  # Periodic check + DM trigger - every 30 min OR direct message
   - name: periodic
     when: 'every("30m") || direct'
     command: claude -p "Check pantalk notifications --unseen and respond"
@@ -350,4 +350,4 @@ pantalk notifications --unseen --limit 20
 pantalk notifications --unseen --clear
 ```
 
-This keeps the interface consistent — agents use the same CLI as interactive users.
+This keeps the interface consistent - agents use the same CLI as interactive users.

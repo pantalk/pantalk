@@ -6,7 +6,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// prepareTelegramSegments — ported from telegram.markdown.utest.js
+// prepareTelegramSegments - ported from telegram.markdown.utest.js
 // ---------------------------------------------------------------------------
 
 func TestPrepareTelegramSegments_PlainText(t *testing.T) {
@@ -260,7 +260,7 @@ func TestPrepareTelegramSegments_MarkdownBlockquote(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// prepareDiscordSegments — ported from discord.markdown.utest.js
+// prepareDiscordSegments - ported from discord.markdown.utest.js
 // ---------------------------------------------------------------------------
 
 func TestPrepareDiscordSegments_PlainText(t *testing.T) {
@@ -385,7 +385,7 @@ func TestPrepareDiscordSegments_InvalidFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// prepareSlackSegments — ported from slack.markdown.utest.js
+// prepareSlackSegments - ported from slack.markdown.utest.js
 // ---------------------------------------------------------------------------
 
 func TestPrepareSlackSegments_PlainText(t *testing.T) {
@@ -442,7 +442,7 @@ func TestPrepareSlackSegments_InvalidFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// prepareMattermostSegments — ported from generic patterns
+// prepareMattermostSegments - ported from generic patterns
 // ---------------------------------------------------------------------------
 
 func TestPrepareMattermostSegments_PlainText(t *testing.T) {
@@ -942,11 +942,11 @@ func TestAllConnectors_RejectInvalidFormat_Extended(t *testing.T) {
 }
 
 // ===========================================================================
-// BAD PATH / EDGE CASE TESTS — CONNECTORS
+// BAD PATH / EDGE CASE TESTS - CONNECTORS
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// Malformed HTML input — every connector should handle gracefully
+// Malformed HTML input - every connector should handle gracefully
 // ---------------------------------------------------------------------------
 
 func TestAllConnectors_MalformedHTML(t *testing.T) {
@@ -1000,7 +1000,7 @@ func TestAllConnectors_MalformedHTML(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Only-whitespace input — connectors should produce empty segments
+// Only-whitespace input - connectors should produce empty segments
 // ---------------------------------------------------------------------------
 
 func TestAllConnectors_WhitespaceOnlyText(t *testing.T) {
@@ -1036,7 +1036,7 @@ func TestAllConnectors_WhitespaceOnlyText(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Very large input — close to or exceeding per-connector limits
+// Very large input - close to or exceeding per-connector limits
 // ---------------------------------------------------------------------------
 
 func TestTelegram_ExactlyAtLimit(t *testing.T) {
@@ -1182,7 +1182,7 @@ func TestIMessage_AtLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown with embedded raw HTML — connector-specific handling
+// Markdown with embedded raw HTML - connector-specific handling
 // ---------------------------------------------------------------------------
 
 func TestTelegram_MarkdownWithRawHTML(t *testing.T) {
@@ -1194,7 +1194,7 @@ func TestTelegram_MarkdownWithRawHTML(t *testing.T) {
 	if len(segs) == 0 {
 		t.Fatal("expected non-empty segments")
 	}
-	// Telegram markdown path converts to HTML — both <strong> and <u> should be present.
+	// Telegram markdown path converts to HTML - both <strong> and <u> should be present.
 	if segs[0].ParseMode != "HTML" {
 		t.Fatalf("expected HTML parse mode, got %q", segs[0].ParseMode)
 	}
@@ -1212,7 +1212,7 @@ func TestSlack_MarkdownWithRawHTML(t *testing.T) {
 	if len(segs) == 0 {
 		t.Fatal("expected segments")
 	}
-	// Slack markdown path passes through — raw HTML stays in.
+	// Slack markdown path passes through - raw HTML stays in.
 	if !strings.Contains(segs[0], "**bold**") {
 		t.Fatalf("expected markdown preserved for slack, got %q", segs[0])
 	}
@@ -1264,7 +1264,7 @@ func TestAllConnectors_ControlCharacters(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Matrix — specific bad paths
+// Matrix - specific bad paths
 // ---------------------------------------------------------------------------
 
 func TestMatrix_MalformedMarkdown(t *testing.T) {
@@ -1305,7 +1305,7 @@ func TestMatrix_HTMLInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Zulip — markdown passthrough with edge cases
+// Zulip - markdown passthrough with edge cases
 // ---------------------------------------------------------------------------
 
 func TestZulip_MarkdownPreserved(t *testing.T) {
@@ -1337,7 +1337,7 @@ func TestZulip_HTMLStripped(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Telegram HTML path — large HTML that triggers SplitHTML + repair
+// Telegram HTML path - large HTML that triggers SplitHTML + repair
 // ---------------------------------------------------------------------------
 
 func TestTelegram_LargeHTMLWithRepair(t *testing.T) {
@@ -1364,11 +1364,11 @@ func TestTelegram_LargeHTMLWithRepair(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empty text after format conversion — edge case
+// Empty text after format conversion - edge case
 // ---------------------------------------------------------------------------
 
 func TestAllConnectors_EmptyTextAfterHTMLStrip(t *testing.T) {
-	// HTML that contains only tags — after stripping, text is empty.
+	// HTML that contains only tags - after stripping, text is empty.
 	input := "<div><span></span></div>"
 
 	// These connectors strip HTML: slack, discord, mattermost, irc, twilio, whatsapp, imessage, zulip
@@ -1401,7 +1401,7 @@ func TestAllConnectors_EmptyTextAfterHTMLStrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Unicode edge cases — CJK, emoji, RTL
+// Unicode edge cases - CJK, emoji, RTL
 // ---------------------------------------------------------------------------
 
 func TestTelegram_UnicodeContent(t *testing.T) {

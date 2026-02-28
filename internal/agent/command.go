@@ -40,7 +40,7 @@ func (c *Command) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // tokenize splits a command string into tokens, respecting single and double
-// quotes. This is intentionally simple — no variable expansion, no escapes
+// quotes. This is intentionally simple - no variable expansion, no escapes
 // beyond backslash inside double quotes, no globbing.
 func tokenize(s string) ([]string, error) {
 	var tokens []string

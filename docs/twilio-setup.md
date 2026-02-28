@@ -12,7 +12,7 @@ Pantalk connects to Twilio using the **REST API**, polling for incoming SMS/MMS 
 
 1. Log in to the [Twilio Console](https://console.twilio.com/)
 2. On the dashboard, find your **Account SID** and **Auth Token**
-3. Copy both values — you'll need them for configuration
+3. Copy both values - you'll need them for configuration
 
 > **Note:** The Account SID starts with `AC` and the Auth Token is a 32-character hex string.
 
@@ -78,8 +78,8 @@ pantalk send --bot my-twilio-bot --channel +15559876543 --text "Hello from Panta
 
 | Symptom                        | Cause                                                                         |
 | ------------------------------ | ----------------------------------------------------------------------------- |
-| `401 Unauthorized`             | Invalid Auth Token or Account SID — check credentials in Twilio Console       |
-| `21608` error                  | Phone number not owned by account — verify the number in Active Numbers       |
-| `21211` error                  | Invalid `To` number — ensure E.164 format with country code (e.g. `+1...`)   |
+| `401 Unauthorized`             | Invalid Auth Token or Account SID - check credentials in Twilio Console       |
+| `21608` error                  | Phone number not owned by account - verify the number in Active Numbers       |
+| `21211` error                  | Invalid `To` number - ensure E.164 format with country code (e.g. `+1...`)   |
 | Connected but no messages      | Messages may take 5-10s to appear due to polling interval                     |
-| Trial account limitations      | Trial accounts can only send to verified numbers — upgrade or verify numbers  |
+| Trial account limitations      | Trial accounts can only send to verified numbers - upgrade or verify numbers  |

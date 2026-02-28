@@ -131,15 +131,15 @@ func (w *WhatsAppConnector) connect(ctx context.Context) error {
 	client.AddEventHandler(w.handleEvent)
 
 	if client.Store.ID == nil {
-		// Not paired yet — tell the user how to pair and return an error
+		// Not paired yet - tell the user how to pair and return an error
 		// so the Run loop retries after backoff.
-		msg := fmt.Sprintf("not paired — run: pantalk pair --bot %s", w.botName)
+		msg := fmt.Sprintf("not paired - run: pantalk pair --bot %s", w.botName)
 		log.Printf("[whatsapp:%s] %s", w.botName, msg)
 		w.publishStatus(msg)
 		return fmt.Errorf("%s", msg)
 	}
 
-	// Already paired — connect with saved credentials.
+	// Already paired - connect with saved credentials.
 	if err := client.Connect(); err != nil {
 		return fmt.Errorf("whatsapp connect: %w", err)
 	}
@@ -166,8 +166,8 @@ func (w *WhatsAppConnector) handleEvent(evt interface{}) {
 		log.Printf("[whatsapp:%s] disconnected", w.botName)
 		w.publishStatus("connector disconnected")
 	case *events.LoggedOut:
-		log.Printf("[whatsapp:%s] logged out — re-pair required on next restart", w.botName)
-		w.publishStatus("logged out — restart pantalkd to re-pair")
+		log.Printf("[whatsapp:%s] logged out - re-pair required on next restart", w.botName)
+		w.publishStatus("logged out - restart pantalkd to re-pair")
 	}
 }
 

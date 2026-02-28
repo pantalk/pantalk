@@ -557,7 +557,7 @@ func TestFlush_WhenAlreadyRunning(t *testing.T) {
 	r.pending = append(r.pending, makeEvent())
 	r.mu.Unlock()
 
-	// Call flush directly — it should see running=true and reschedule
+	// Call flush directly - it should see running=true and reschedule
 	r.flush()
 
 	r.mu.Lock()
@@ -584,7 +584,7 @@ func TestFlush_EmptyPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Flush with nothing pending — should be a no-op
+	// Flush with nothing pending - should be a no-op
 	r.flush()
 
 	r.mu.Lock()
@@ -992,7 +992,7 @@ func TestNewRunner_InvalidAtArgument(t *testing.T) {
 		Command: Command{"claude"},
 	})
 	if err != nil {
-		t.Fatal("expression should compile — validation happens at runtime")
+		t.Fatal("expression should compile - validation happens at runtime")
 	}
 
 	// Invalid time should cause a mismatch (runtime error → false)
@@ -1009,7 +1009,7 @@ func TestNewRunner_InvalidEveryArgument(t *testing.T) {
 		Command: Command{"claude"},
 	})
 	if err != nil {
-		t.Fatal("expression should compile — validation happens at runtime")
+		t.Fatal("expression should compile - validation happens at runtime")
 	}
 
 	at9 := time.Date(2026, 2, 19, 9, 0, 0, 0, time.Local)
@@ -1092,7 +1092,7 @@ func TestEveryFunc_UnknownUnit(t *testing.T) {
 		Command: Command{"claude"},
 	})
 	if err != nil {
-		t.Fatal("expression should compile — validation happens at runtime")
+		t.Fatal("expression should compile - validation happens at runtime")
 	}
 
 	at9 := time.Date(2026, 2, 19, 9, 0, 0, 0, time.Local)
@@ -1108,7 +1108,7 @@ func TestEveryFunc_EmptyInterval(t *testing.T) {
 		Command: Command{"claude"},
 	})
 	if err != nil {
-		t.Fatal("expression should compile — validation happens at runtime")
+		t.Fatal("expression should compile - validation happens at runtime")
 	}
 
 	at9 := time.Date(2026, 2, 19, 9, 0, 0, 0, time.Local)
@@ -1124,7 +1124,7 @@ func TestEveryFunc_NegativeInterval(t *testing.T) {
 		Command: Command{"claude"},
 	})
 	if err != nil {
-		t.Fatal("expression should compile — validation happens at runtime")
+		t.Fatal("expression should compile - validation happens at runtime")
 	}
 
 	at := time.Date(2026, 2, 19, 0, 0, 0, 0, time.Local)
@@ -1312,7 +1312,7 @@ func TestFlush_CooldownExpired(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	r.mu.Lock()
-	// Either running or already finished — lastFinish should be updated
+	// Either running or already finished - lastFinish should be updated
 	r.mu.Unlock()
 }
 

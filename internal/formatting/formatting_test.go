@@ -51,7 +51,7 @@ func TestNormalizeFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MarkdownToHTML — ported from telegram/slack/whatsapp/discord .markdown.utest.js
+// MarkdownToHTML - ported from telegram/slack/whatsapp/discord .markdown.utest.js
 // ---------------------------------------------------------------------------
 
 func TestMarkdownToHTML_SimpleText(t *testing.T) {
@@ -639,7 +639,7 @@ func TestMarkdownToPlain_MultiParagraph(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SplitHTML — well-formed chunk repair
+// SplitHTML - well-formed chunk repair
 // ---------------------------------------------------------------------------
 
 func TestSplitHTML_RepairsNestedBlockquote(t *testing.T) {
@@ -660,7 +660,7 @@ func TestSplitHTML_RepairsNestedBlockquote(t *testing.T) {
 }
 
 func TestSplitHTML_PreservesAttributesAcrossChunks(t *testing.T) {
-	// A <div class="x"> wrapping paragraphs — attributes should carry forward.
+	// A <div class="x"> wrapping paragraphs - attributes should carry forward.
 	input := `<div class="x"><p>` + strings.Repeat("A", 40) + `</p><p>` + strings.Repeat("B", 40) + `</p></div>`
 	chunks := SplitHTML(input, 70)
 	if len(chunks) < 2 {
@@ -673,7 +673,7 @@ func TestSplitHTML_PreservesAttributesAcrossChunks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// hardSplit — HTML safety
+// hardSplit - HTML safety
 // ---------------------------------------------------------------------------
 
 func TestHardSplit_DoesNotBreakHTMLTag(t *testing.T) {
@@ -704,7 +704,7 @@ func TestHardSplit_DoesNotBreakEntity(t *testing.T) {
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// NormalizeFormat — bad paths
+// NormalizeFormat - bad paths
 // ---------------------------------------------------------------------------
 
 func TestNormalizeFormat_SQLInjection(t *testing.T) {
@@ -736,7 +736,7 @@ func TestNormalizeFormat_UnicodeInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MarkdownToHTML — bad paths
+// MarkdownToHTML - bad paths
 // ---------------------------------------------------------------------------
 
 func TestMarkdownToHTML_EmptyString(t *testing.T) {
@@ -759,7 +759,7 @@ func TestMarkdownToHTML_OnlyWhitespace(t *testing.T) {
 }
 
 func TestMarkdownToHTML_MalformedMarkdown(t *testing.T) {
-	// Unclosed formatting — goldmark should handle gracefully.
+	// Unclosed formatting - goldmark should handle gracefully.
 	inputs := []string{
 		"**unclosed bold",
 		"_unclosed italic",
@@ -794,7 +794,7 @@ func TestMarkdownToHTML_ScriptInjection(t *testing.T) {
 }
 
 func TestMarkdownToHTML_VeryLargeInput(t *testing.T) {
-	// 100KB of markdown — shouldn't panic or OOM.
+	// 100KB of markdown - shouldn't panic or OOM.
 	input := strings.Repeat("**bold** and _italic_ text\n\n", 5000)
 	result, err := MarkdownToHTML(input)
 	if err != nil {
@@ -827,7 +827,7 @@ func TestMarkdownToHTML_DeeplyNestedLists(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// StripHTML — bad paths
+// StripHTML - bad paths
 // ---------------------------------------------------------------------------
 
 func TestStripHTML_UnclosedTags(t *testing.T) {
@@ -854,7 +854,7 @@ func TestStripHTML_MalformedTags(t *testing.T) {
 	for _, tt := range inputs {
 		t.Run(tt.name, func(t *testing.T) {
 			result := StripHTML(tt.input)
-			// Should not panic — exact output varies.
+			// Should not panic - exact output varies.
 			_ = result
 		})
 	}
@@ -870,7 +870,7 @@ func TestStripHTML_ScriptAndStyleContent(t *testing.T) {
 }
 
 func TestStripHTML_NumericEntities(t *testing.T) {
-	// Numeric entities beyond our map — verify no crash, entities remain.
+	// Numeric entities beyond our map - verify no crash, entities remain.
 	result := StripHTML("curly: &#8220;quote&#8221; and &#x2F;slash")
 	if !strings.Contains(result, "curly:") {
 		t.Fatalf("expected text preserved, got %q", result)
@@ -893,7 +893,7 @@ func TestStripHTML_VeryLargeInput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MarkdownToPlain — bad paths
+// MarkdownToPlain - bad paths
 // ---------------------------------------------------------------------------
 
 func TestMarkdownToPlain_EmptyString(t *testing.T) {
@@ -920,7 +920,7 @@ func TestMarkdownToPlain_HTMLInMarkdown(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SplitText — bad paths
+// SplitText - bad paths
 // ---------------------------------------------------------------------------
 
 func TestSplitText_ZeroMaxLen(t *testing.T) {
@@ -1009,12 +1009,12 @@ func TestSplitText_EmojiSequences(t *testing.T) {
 func TestSplitText_MixedNewlineStyles(t *testing.T) {
 	input := "para1\r\n\r\npara2\n\npara3"
 	result := SplitText(input, 10)
-	// \r\n\r\n doesn't split on \n\n — the \r chars stay in paragraphs.
+	// \r\n\r\n doesn't split on \n\n - the \r chars stay in paragraphs.
 	_ = result
 }
 
 // ---------------------------------------------------------------------------
-// SplitHTML — bad paths
+// SplitHTML - bad paths
 // ---------------------------------------------------------------------------
 
 func TestSplitHTML_ZeroMaxLen(t *testing.T) {
@@ -1042,7 +1042,7 @@ func TestSplitHTML_MalformedHTML(t *testing.T) {
 }
 
 func TestSplitHTML_OnlyInlineTags(t *testing.T) {
-	// No block-level tags — falls through to hardSplit.
+	// No block-level tags - falls through to hardSplit.
 	input := strings.Repeat("<b>x</b><i>y</i>", 100)
 	result := SplitHTML(input, 50)
 	if len(result) < 2 {
@@ -1051,7 +1051,7 @@ func TestSplitHTML_OnlyInlineTags(t *testing.T) {
 }
 
 func TestSplitHTML_VoidElements(t *testing.T) {
-	// <br>, <hr>, <img> are void — should not confuse tag tracking.
+	// <br>, <hr>, <img> are void - should not confuse tag tracking.
 	input := "<p>line1<br/>line2</p><p>line3<hr/>line4</p>"
 	result := SplitHTML(input, 25)
 	for _, chunk := range result {
@@ -1126,7 +1126,7 @@ func TestSplitHTML_TagAtBoundary(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// repairHTMLChunks — bad paths (via SplitHTML)
+// repairHTMLChunks - bad paths (via SplitHTML)
 // ---------------------------------------------------------------------------
 
 func TestRepairHTMLChunks_SingleChunk(t *testing.T) {
@@ -1139,7 +1139,7 @@ func TestRepairHTMLChunks_SingleChunk(t *testing.T) {
 }
 
 func TestRepairHTMLChunks_EmptyChunks(t *testing.T) {
-	// Edge case — empty string.
+	// Edge case - empty string.
 	result := SplitHTML("", 100)
 	if len(result) != 1 || result[0] != "" {
 		t.Fatalf("expected single empty chunk, got %v", result)
@@ -1168,7 +1168,7 @@ func TestRepairHTMLChunks_MultipleNestingLevels(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// findSafeBreak — edge cases (tested indirectly through hardSplit)
+// findSafeBreak - edge cases (tested indirectly through hardSplit)
 // ---------------------------------------------------------------------------
 
 func TestHardSplit_AllAngleBrackets(t *testing.T) {
@@ -1182,7 +1182,7 @@ func TestHardSplit_AllAngleBrackets(t *testing.T) {
 
 func TestHardSplit_AllAmpersands(t *testing.T) {
 	// Pathological: line of ampersands. findSafeBreak will keep walking
-	// back looking for ';' — should not infinite loop or panic.
+	// back looking for ';' - should not infinite loop or panic.
 	input := strings.Repeat("&", 200)
 	result := hardSplit(input, 10)
 	if len(result) == 0 {
@@ -1196,7 +1196,7 @@ func TestHardSplit_VeryLongTag(t *testing.T) {
 	input := tag + "text"
 	result := hardSplit(input, 50)
 	// findSafeBreak only looks back 100 runes, so it can't see the '<'.
-	// This is a known limitation — just verify no panic.
+	// This is a known limitation - just verify no panic.
 	if len(result) == 0 {
 		t.Fatal("expected non-empty result")
 	}
@@ -1298,7 +1298,7 @@ func TestPipeline_LargeMarkdownDocument(t *testing.T) {
 			continue
 		}
 		if opens != closes {
-			// This can happen with entities — not a strict failure.
+			// This can happen with entities - not a strict failure.
 			// Just verify no obviously broken tags.
 			if strings.HasSuffix(strings.TrimSpace(chunk), "<") {
 				t.Fatalf("chunk %d ends with broken tag: ...%q", i, chunk[max(0, len(chunk)-50):])

@@ -1143,7 +1143,7 @@ func TestOpen_CreatesDirectory(t *testing.T) {
 }
 
 func TestOpen_InMemory(t *testing.T) {
-	// ":memory:" has dir "." — should work
+	// ":memory:" has dir "." - should work
 	s, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("open in-memory: %v", err)
@@ -1153,5 +1153,47 @@ func TestOpen_InMemory(t *testing.T) {
 	_, err = s.InsertEvent(makeEvent("slack", "bot", "test", "in"))
 	if err != nil {
 		t.Fatalf("insert: %v", err)
+	}
+}
+
+func TestNotificationStats(t *testing.T) {
+	s := openTestStore(t)
+
+	inbound := makeEvent("slack", "bot-a", "first", "in")
+	inbound.Notify = true
+	inboundID, err := s.InsertEvent(inbound)
+	if err != nil {
+		t.Fatalf("insert inbound event: %v", err)
+	}
+	inbound.ID = inboundID
+	firstNotificationID, err := s.InsertNotification(inbound)
+	if err != nil {
+		t.Fatalf("insert inbound notification: %v", err)
+	}
+
+	outbound := makeEvent("slack", "bot-a", "second", "out")
+	outbound.Notify = true
+	outboundID, err := s.InsertEvent(outbound)
+	if err != nil {
+		t.Fatalf("insert outbound event: %v", err)
+	}
+	outbound.ID = outboundID
+	if _, err := s.InsertNotification(outbound); err != nil {
+		t.Fatalf("insert outbound notification: %v", err)
+	}
+
+	if _, err := s.MarkSeenByID(firstNotificationID); err != nil {
+		t.Fatalf("mark seen by id: %v", err)
+	}
+
+	stats, err := s.NotificationStats()
+	if err != nil {
+		t.Fatalf("notification stats: %v", err)
+	}
+	if stats.Total != 2 {
+		t.Fatalf("expected total=2, got %d", stats.Total)
+	}
+	if stats.Unseen != 1 {
+		t.Fatalf("expected unseen=1, got %d", stats.Unseen)
 	}
 }

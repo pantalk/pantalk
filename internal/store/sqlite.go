@@ -43,6 +43,11 @@ type Store struct {
 	mu sync.Mutex
 }
 
+type NotificationStats struct {
+	Total  int64
+	Unseen int64
+}
+
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -598,6 +603,25 @@ func (s *Store) DeleteNotifications(filter NotificationFilter, all bool) (int64,
 	}
 
 	return count, nil
+}
+
+func (s *Store) NotificationStats() (NotificationStats, error) {
+	row := s.db.QueryRow(`
+SELECT
+	COUNT(*) AS total,
+	SUM(CASE WHEN seen = 0 THEN 1 ELSE 0 END) AS unseen
+FROM notifications
+`)
+
+	var stats NotificationStats
+	var unseen sql.NullInt64
+	if err := row.Scan(&stats.Total, &unseen); err != nil {
+		return NotificationStats{}, fmt.Errorf("notification stats: %w", err)
+	}
+	if unseen.Valid {
+		stats.Unseen = unseen.Int64
+	}
+	return stats, nil
 }
 
 func scanEvent(rows *sql.Rows) (protocol.Event, error) {

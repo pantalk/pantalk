@@ -1193,7 +1193,7 @@ func TestZulipResolveChannelNames(t *testing.T) {
 		if _, ok := c.channels["99"]; !ok {
 			t.Error("expected 'engineering' to be resolved to '99'")
 		}
-		// 'general' resolves to '42' which already exists — both should merge
+		// 'general' resolves to '42' which already exists - both should merge
 		if len(c.channels) > 3 {
 			t.Errorf("expected at most 3 channels, got %d", len(c.channels))
 		}
@@ -1453,7 +1453,7 @@ func TestIMessageSend(t *testing.T) {
 		serviceName:  "imessage",
 		botName:      "test",
 		channels:     map[string]struct{}{},
-		osascriptCmd: "echo", // mock osascript — echo just prints and succeeds
+		osascriptCmd: "echo", // mock osascript - echo just prints and succeeds
 		publish: func(ev protocol.Event) {
 			mu.Lock()
 			published = append(published, ev)

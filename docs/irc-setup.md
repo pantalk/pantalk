@@ -1,6 +1,6 @@
 # IRC Setup
 
-Pantalk connects to IRC servers using a standard TCP connection (with optional TLS) and the IRC protocol. No special API keys or app registrations are needed — just a server address and a nickname.
+Pantalk connects to IRC servers using a standard TCP connection (with optional TLS) and the IRC protocol. No special API keys or app registrations are needed - just a server address and a nickname.
 
 ## Prerequisites
 
@@ -132,9 +132,9 @@ pantalk send --bot my-irc-bot --channel '#mychannel' --text "Hello from Pantalk!
 
 | Symptom                          | Cause                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------ |
-| Connection refused               | Wrong server address or port — verify the endpoint                             |
-| TLS handshake error              | Server doesn't support TLS on that port — try port 6667 for plain text         |
-| Nickname in use                  | Another user has the nick — Pantalk retries with `_` suffix automatically      |
-| Not receiving messages           | Bot may not have joined the channel — check daemon logs for JOIN confirmation  |
-| Kicked from channel              | Bot was kicked — Pantalk auto-rejoins, but check channel permissions           |
+| Connection refused               | Wrong server address or port - verify the endpoint                             |
+| TLS handshake error              | Server doesn't support TLS on that port - try port 6667 for plain text         |
+| Nickname in use                  | Another user has the nick - Pantalk retries with `_` suffix automatically      |
+| Not receiving messages           | Bot may not have joined the channel - check daemon logs for JOIN confirmation  |
+| Kicked from channel              | Bot was kicked - Pantalk auto-rejoins, but check channel permissions           |
 | No messages from channel         | Channels must be listed in config, or use an empty channels list for all       |

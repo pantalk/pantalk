@@ -27,7 +27,7 @@ const defaultMessagesDBPath = "~/Library/Messages/chat.db"
 // IMessageConnector bridges iMessage to the PanTalk event stream natively on
 // macOS. Incoming messages are read directly from the Messages SQLite database
 // (~/Library/Messages/chat.db) and outbound messages are sent via osascript
-// (AppleScript → Messages.app). No third-party servers or tools are required —
+// (AppleScript → Messages.app). No third-party servers or tools are required -
 // just a Mac with Messages signed in.
 //
 // Requirements:
@@ -533,7 +533,7 @@ func appleTimestampToTime(appleNanos int64) time.Time {
 	appleEpoch := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// Modern macOS stores timestamps in nanoseconds. Older versions used
-	// seconds — detect by magnitude. We convert to seconds + remainder to
+	// seconds - detect by magnitude. We convert to seconds + remainder to
 	// avoid time.Duration overflow on large nanosecond values.
 	//
 	// Magnitude ranges (for dates in the 2020s, ~20-25 years after epoch):
