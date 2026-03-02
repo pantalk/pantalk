@@ -201,6 +201,9 @@ pantalk stream --bot my-bot --notify --timeout 120
 # Validate config (uses default config location)
 pantalk validate
 
+# List configured bots without exposing credentials
+pantalk config list-bots --json
+
 # Edit non-interactively
 pantalk config set-server --history 1000
 

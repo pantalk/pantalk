@@ -140,6 +140,8 @@ func runConfig(args []string) error {
 	switch subcommand {
 	case "print":
 		return runConfigPrint(subArgs)
+	case "list-bots":
+		return runConfigListBots(subArgs)
 	case "set-server":
 		return runConfigSetServer(subArgs)
 	case "add-bot":
@@ -172,6 +174,45 @@ func runConfigPrint(args []string) error {
 	}
 
 	fmt.Print(string(data))
+	return nil
+}
+
+func runConfigListBots(args []string) error {
+	flags := flag.NewFlagSet("config list-bots", flag.ContinueOnError)
+	configPath := flags.String("config", defaultConfigPath, "config path")
+	jsonOut := flags.Bool("json", false, "output as JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+
+	type botSummary struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		DisplayName string `json:"display_name,omitempty"`
+	}
+
+	summary := make([]botSummary, 0, len(cfg.Bots))
+	for _, bot := range cfg.Bots {
+		summary = append(summary, botSummary{
+			Name:        bot.Name,
+			Type:        bot.Type,
+			DisplayName: bot.DisplayName,
+		})
+	}
+
+	if *jsonOut {
+		return json.NewEncoder(os.Stdout).Encode(summary)
+	}
+
+	for _, bot := range summary {
+		fmt.Printf("%s\t%s\t%s\n", bot.Name, bot.Type, bot.DisplayName)
+	}
+
 	return nil
 }
 
@@ -780,8 +821,9 @@ func printConfigUsage() {
 
 Usage:
   pantalk config print [--config %s]
+  pantalk config list-bots [--config %s] [--json]
   pantalk config set-server --config <path> [--socket ...] [--db ...] [--history ...]
   pantalk config add-bot --config <path> --name <bot> --type <type> [--bot-token ...] [--app-level-token ...] [--access-token ...] [--endpoint ...] [--auth-token ...] [--account-sid ...] [--phone-number ...] [--api-key ...] [--bot-email ...] [--db-path ...] [--password ...] [--transport ...] [--channels a,b]
   pantalk config remove-bot --config <path> --name <bot>
-`, defaultConfigPath)
+`, defaultConfigPath, defaultConfigPath)
 }

@@ -618,6 +618,7 @@ Admin:
   %s reload [--socket PATH]
   %s pair --bot NAME [--config PATH]
   %s config print [--config PATH]
+  %s config list-bots [--config PATH] [--json]
   %s config set-server [--socket ...] [--db ...] [--history ...]
   %s config add-bot --name NAME --type TYPE [--bot-token ...] [--app-level-token ...] [--endpoint ...] [--transport ...] [--channels ...]
   %s config remove-bot --name NAME
@@ -631,6 +632,7 @@ JSON output is enabled by default when stdout is not a terminal.
 		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,
+		toolName,
 		toolName,
 		toolName,
 		toolName,
