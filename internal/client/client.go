@@ -206,6 +206,8 @@ func runSend(service string, args []string) int {
 	thread := flags.String("thread", "", "thread id")
 	text := flags.String("text", "", "message text (use - to read from stdin)")
 	format := flags.String("format", "plain", "message format (plain, markdown, html)")
+	icon := flags.String("icon", "", "per-message avatar override: emoji (:wolf:) or image URL (Slack, needs chat:write.customize)")
+	username := flags.String("username", "", "per-message display-name override (Slack, needs chat:write.customize)")
 	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -240,14 +242,16 @@ func runSend(service string, args []string) int {
 	}
 
 	resp, err := call(*socket, protocol.Request{
-		Action:  protocol.ActionSend,
-		Service: svc,
-		Bot:     *bot,
-		Target:  *target,
-		Channel: *channel,
-		Thread:  *thread,
-		Text:    messageText,
-		Format:  *format,
+		Action:   protocol.ActionSend,
+		Service:  svc,
+		Bot:      *bot,
+		Target:   *target,
+		Channel:  *channel,
+		Thread:   *thread,
+		Text:     messageText,
+		Format:   *format,
+		Icon:     *icon,
+		Username: *username,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
