@@ -181,6 +181,19 @@ func (s *SlackConnector) Send(ctx context.Context, request protocol.Request) (pr
 	if request.Thread != "" {
 		parameters.ThreadTimestamp = request.Thread
 	}
+	// Per-message identity overrides (require chat:write.customize scope).
+	if request.Username != "" {
+		parameters.Username = request.Username
+		parameters.AsUser = false
+	}
+	if icon := strings.TrimSpace(request.Icon); icon != "" {
+		if strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://") {
+			parameters.IconURL = icon
+		} else {
+			parameters.IconEmoji = icon
+		}
+		parameters.AsUser = false
+	}
 
 	var lastEvent protocol.Event
 	for _, segmentText := range segments {

@@ -17,21 +17,23 @@ const (
 )
 
 type Request struct {
-	Action  string `json:"action"`
-	Service string `json:"service,omitempty"`
-	Bot     string `json:"bot,omitempty"`
-	Target  string `json:"target,omitempty"`
-	Channel string `json:"channel,omitempty"`
-	Thread  string `json:"thread,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Format  string `json:"format,omitempty"`
-	Emoji   string `json:"emoji,omitempty"`
-	Search  string `json:"search,omitempty"`
-	Notify  bool   `json:"notify,omitempty"`
-	Unseen  bool   `json:"unseen,omitempty"`
-	All     bool   `json:"all,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
-	SinceID int64  `json:"since_id,omitempty"`
+	Action   string `json:"action"`
+	Service  string `json:"service,omitempty"`
+	Bot      string `json:"bot,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Channel  string `json:"channel,omitempty"`
+	Thread   string `json:"thread,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Format   string `json:"format,omitempty"`
+	Icon     string `json:"icon,omitempty"`     // per-message avatar override (emoji like ":wolf:" or an image URL); Slack chat:write.customize
+	Username string `json:"username,omitempty"` // per-message display-name override; Slack chat:write.customize
+	Emoji    string `json:"emoji,omitempty"`
+	Search   string `json:"search,omitempty"`
+	Notify   bool   `json:"notify,omitempty"`
+	Unseen   bool   `json:"unseen,omitempty"`
+	All      bool   `json:"all,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	SinceID  int64  `json:"since_id,omitempty"`
 }
 
 type Response struct {
