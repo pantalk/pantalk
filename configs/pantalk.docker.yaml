@@ -1,0 +1,6 @@
+server:
+  notification_history_size: 1000
+
+bots:
+  - name: local-test
+    type: local

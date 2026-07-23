@@ -4,6 +4,15 @@ All notable changes to Pantalk are documented here, following [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-07-23
+
+### Added
+
+- Publish version-matched Pantalk container images for Linux amd64 and arm64
+  through GitHub Container Registry.
+- Include a credential-free local connector configuration in the container
+  image for immediate smoke testing.
+
 ## [0.0.8] - 2026-07-23
 
 ### Fixed
