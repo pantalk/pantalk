@@ -95,6 +95,8 @@ func TestInsertAndListEvents(t *testing.T) {
 	s := openTestStore(t)
 
 	ev := makeEvent("slack", "bot-a", "hello world", "in")
+	ev.ChannelName = "#engineering"
+	ev.Schedule = "morning-review"
 	id, err := s.InsertEvent(ev)
 	if err != nil {
 		t.Fatalf("insert event: %v", err)
@@ -115,6 +117,9 @@ func TestInsertAndListEvents(t *testing.T) {
 	}
 	if events[0].ID != id {
 		t.Fatalf("expected id %d, got %d", id, events[0].ID)
+	}
+	if events[0].ChannelName != "#engineering" || events[0].Schedule != "morning-review" {
+		t.Fatalf("channel metadata was not preserved: %+v", events[0])
 	}
 }
 
@@ -227,6 +232,8 @@ func TestInsertAndListNotifications(t *testing.T) {
 
 	ev := makeEvent("slack", "bot", "ping", "in")
 	ev.Notify = true
+	ev.ChannelName = "#engineering"
+	ev.Schedule = "morning-review"
 	evID, _ := s.InsertEvent(ev)
 	ev.ID = evID
 
@@ -250,6 +257,10 @@ func TestInsertAndListNotifications(t *testing.T) {
 	}
 	if notifications[0].Seen {
 		t.Fatal("expected notification to be unseen")
+	}
+	if notifications[0].ChannelName != "#engineering" ||
+		notifications[0].Schedule != "morning-review" {
+		t.Fatalf("notification metadata was not preserved: %+v", notifications[0])
 	}
 }
 

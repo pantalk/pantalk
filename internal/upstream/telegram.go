@@ -152,7 +152,8 @@ type tgFile struct {
 }
 
 type tgChat struct {
-	ID int64 `json:"id"`
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
 }
 
 type tgUser struct {
@@ -274,7 +275,8 @@ func (t *TelegramConnector) pollLoop(ctx context.Context) {
 			}
 
 			channelID := strconv.FormatInt(message.Chat.ID, 10)
-			if !t.acceptsChannel(channelID) {
+			direct := message.Chat.Type == "private"
+			if !direct && !t.acceptsChannel(channelID) {
 				continue
 			}
 
@@ -309,6 +311,7 @@ func (t *TelegramConnector) pollLoop(ctx context.Context) {
 				Target:      "chat:" + channelID,
 				Channel:     channelID,
 				Thread:      thread,
+				Direct:      direct,
 				Text:        text,
 				Attachments: attachments,
 			})

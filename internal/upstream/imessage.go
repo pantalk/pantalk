@@ -345,7 +345,7 @@ func (c *IMessageConnector) handleIncomingMessage(row chatDBRow) {
 	chatID := row.ChatID
 	isGroup := row.RoomName != ""
 
-	if chatID != "" && !c.acceptsChannel(chatID) {
+	if isGroup && chatID != "" && !c.acceptsChannel(chatID) {
 		return
 	}
 

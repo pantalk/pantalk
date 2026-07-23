@@ -40,21 +40,15 @@ bots:
   # for testing this flow before adding Slack or another provider.
   - name: local-test
     type: local
+    agents:
+      - agent: engineering-assistant
+        when: notify
 
 agents:
-  # An agent is configured separately, then attached to one or more bots by
-  # name. "engineering-assistant" and "local-test" are user-chosen names.
+  # The top-level definition controls how the runtime starts. Bots reference
+  # it from their ordered agents lists.
   - name: engineering-assistant
     driver: codex
-
-    # These names must match entries under bots. This is the per-integration
-    # routing boundary; the agent will not consume messages from other bots.
-    bots:
-      - local-test
-
-    # Optional advanced filter. The default is "notify": direct messages,
-    # mentions, and follow-ups in conversations where this bot participated.
-    when: notify
 
     # Codex operates on this repository. If omitted, it inherits pantalkd's
     # current directory.

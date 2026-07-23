@@ -94,11 +94,14 @@ func TestRunLocalModeBuildsCodexConfigurationAndStopsServer(t *testing.T) {
 	agent := cfg.Agents[0]
 	if agent.Name != "local-codex" ||
 		agent.Driver != "codex" ||
-		len(agent.Bots) != 1 ||
-		agent.Bots[0] != localBotName ||
 		agent.Workdir != workdir ||
 		agent.Timeout != 300 {
 		t.Fatalf("unexpected local agent config: %+v", agent)
+	}
+	if len(cfg.Bots[0].Agents) != 1 ||
+		cfg.Bots[0].Agents[0].Agent != agent.Name ||
+		cfg.Bots[0].Agents[0].When != "notify" {
+		t.Fatalf("unexpected local agent binding: %+v", cfg.Bots[0].Agents)
 	}
 	if agent.Codex.Binary != "/opt/codex" ||
 		agent.Codex.Model != "test-model" ||

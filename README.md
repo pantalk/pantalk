@@ -92,37 +92,6 @@ receive, and stream chat messages without embedding a provider SDK.
 - **Multi-bot** - define multiple bots per service via config
 - **Local-first** - SQLite persistence, no external dependencies
 
-## Source Layout
-
-```
-cmd/
-  pantalkd/              # Daemon entry point
-  pantalk/               # Unified CLI (messaging + admin)
-configs/
-  pantalk.example.yaml   # Example configuration
-docs/
-  agents.md              # Reactive agent configuration guide
-  codex-agent.md         # Persistent native Codex app-server driver
-  claude-agent.md        # Durable local Claude Code conversational driver
-  local-connector.md     # Offline injection and interactive chat
-  slack-setup.md         # Slack platform setup guide
-  discord-setup.md       # Discord platform setup guide
-  mattermost-setup.md    # Mattermost platform setup guide
-  telegram-setup.md      # Telegram platform setup guide
-  whatsapp-setup.md      # WhatsApp platform setup guide
-  irc-setup.md           # IRC platform setup guide
-  matrix-setup.md        # Matrix platform setup guide
-  twilio-setup.md        # Twilio platform setup guide
-  zulip-setup.md         # Zulip platform setup guide
-  claude-code-hooks.md   # Claude Code hooks integration guide
-internal/
-  client/                # Shared IPC client logic
-  config/                # YAML parsing & validation
-  protocol/              # JSON protocol types
-  server/                # Daemon server + SQLite
-  upstream/              # Platform connectors
-```
-
 ## Quick Start
 
 ### 1. Configure
@@ -188,6 +157,29 @@ The local connector uses the same routing, notification, history, and streaming
 pipeline as provider connectors, but never makes network calls and never echoes
 outbound messages back as inbound messages. See
 [`docs/local-connector.md`](docs/local-connector.md).
+
+Agent runtimes are reusable definitions. Each bot owns an ordered list of
+`when` bindings; the first matching binding handles an inbound message:
+
+```yaml
+agents:
+  - name: engineering
+    driver: codex
+    workdir: /workspace/project
+
+bots:
+  - name: local-test
+    type: local
+    agents:
+      - agent: engineering
+        when: direct
+      - agent: engineering
+        when: true
+```
+
+Time expressions use the same bindings and create durable bot-scoped
+conversations. See [`docs/agents.md`](docs/agents.md) for scheduled prompts,
+timezones, Slack channel-name matching, and the complete field reference.
 
 ### 2. Start the daemon
 

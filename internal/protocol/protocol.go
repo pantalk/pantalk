@@ -104,15 +104,22 @@ type NotifyBacklog struct {
 
 // BotStatus describes a single configured bot.
 type BotStatus struct {
-	Name        string `json:"name"`
-	Service     string `json:"service"`
-	DisplayName string `json:"display_name,omitempty"`
+	Name        string             `json:"name"`
+	Service     string             `json:"service"`
+	DisplayName string             `json:"display_name,omitempty"`
+	Agents      []AgentBindingInfo `json:"agents,omitempty"`
 }
 
 // AgentInfo describes a configured agent runner.
 type AgentInfo struct {
-	Name string `json:"name"`
-	When string `json:"when"`
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
+type AgentBindingInfo struct {
+	Name  string `json:"name,omitempty"`
+	Agent string `json:"agent"`
+	When  string `json:"when"`
 }
 
 type BotRef struct {
@@ -133,7 +140,9 @@ type Event struct {
 	Self           bool         `json:"self,omitempty"`
 	Target         string       `json:"target,omitempty"`
 	Channel        string       `json:"channel,omitempty"`
+	ChannelName    string       `json:"channel_name,omitempty"`
 	Thread         string       `json:"thread,omitempty"`
+	Schedule       string       `json:"schedule,omitempty"`
 	NotificationID int64        `json:"notification_id,omitempty"`
 	Seen           bool         `json:"seen,omitempty"`
 	SeenAt         *time.Time   `json:"seen_at,omitempty"`

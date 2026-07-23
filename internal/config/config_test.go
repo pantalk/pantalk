@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -418,7 +419,6 @@ func TestLoad_AgentWithAllFields(t *testing.T) {
 	path := writeConfig(t, minimalBot+`
 agents:
   - name: triage
-    when: "direct || mentions"
     command: aider --check
     workdir: /tmp/project
     buffer: 10
@@ -430,9 +430,6 @@ agents:
 		t.Fatalf("unexpected error: %v", err)
 	}
 	a := cfg.Agents[0]
-	if a.When != "direct || mentions" {
-		t.Errorf("unexpected when: %q", a.When)
-	}
 	if a.Workdir != "/tmp/project" {
 		t.Errorf("unexpected workdir: %q", a.Workdir)
 	}
@@ -452,8 +449,6 @@ func TestLoad_CodexAgent(t *testing.T) {
 agents:
   - name: engineering-assistant
     driver: codex
-    bots: [bot]
-    when: notify
     workdir: /tmp/project
     timeout: 900
     instructions: |
@@ -471,8 +466,8 @@ agents:
 	}
 
 	a := cfg.Agents[0]
-	if a.Driver != "codex" || len(a.Bots) != 1 || a.Bots[0] != "bot" {
-		t.Fatalf("unexpected codex routing config: %+v", a)
+	if a.Driver != "codex" {
+		t.Fatalf("unexpected codex config: %+v", a)
 	}
 	if a.Codex.Binary != "/usr/local/bin/codex" ||
 		a.Codex.Model != "gpt-5.4" ||
@@ -483,15 +478,14 @@ agents:
 	}
 }
 
-func TestLoad_CodexAgentRequiresBot(t *testing.T) {
+func TestLoad_CodexAgentMayBeUnbound(t *testing.T) {
 	path := writeConfig(t, minimalBot+`
 agents:
   - name: engineering-assistant
     driver: codex
 `)
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "requires at least one bot") {
-		t.Fatalf("expected missing bot error, got %v", err)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -500,8 +494,6 @@ func TestLoad_ClaudeAgent(t *testing.T) {
 agents:
   - name: claude-engineering
     driver: claude
-    bots: [bot]
-    when: notify
     workdir: /tmp/project
     timeout: 900
     instructions: |
@@ -520,8 +512,8 @@ agents:
 	}
 
 	a := cfg.Agents[0]
-	if a.Driver != "claude" || len(a.Bots) != 1 || a.Bots[0] != "bot" {
-		t.Fatalf("unexpected claude routing config: %+v", a)
+	if a.Driver != "claude" {
+		t.Fatalf("unexpected claude config: %+v", a)
 	}
 	if a.Claude.Binary != "/usr/local/bin/claude" ||
 		a.Claude.Model != "sonnet" ||
@@ -537,15 +529,14 @@ agents:
 	}
 }
 
-func TestLoad_ClaudeAgentRequiresBot(t *testing.T) {
+func TestLoad_ClaudeAgentMayBeUnbound(t *testing.T) {
 	path := writeConfig(t, minimalBot+`
 agents:
   - name: claude-engineering
     driver: claude
 `)
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "requires at least one bot") {
-		t.Fatalf("expected missing bot error, got %v", err)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -554,7 +545,6 @@ func TestLoad_ClaudeAgentRejectsUnsupportedPermissionMode(t *testing.T) {
 agents:
   - name: claude-engineering
     driver: claude
-    bots: [bot]
     claude:
       permission_mode: unrestricted
 `)
@@ -564,16 +554,22 @@ agents:
 	}
 }
 
-func TestLoad_AgentRejectsUnknownBot(t *testing.T) {
-	path := writeConfig(t, minimalBot+`
+func TestLoad_BindingRejectsUnknownAgent(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: bot
+    type: discord
+    bot_token: tok
+    agents:
+      - agent: missing
+        when: notify
 agents:
   - name: engineering-assistant
     driver: codex
-    bots: [missing]
 `)
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), `unknown bot "missing"`) {
-		t.Fatalf("expected unknown bot error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `unknown agent "missing"`) {
+		t.Fatalf("expected unknown agent error, got %v", err)
 	}
 }
 
@@ -605,7 +601,6 @@ func TestLoad_CodexAgentRejectsUnsupportedSafetyOverrides(t *testing.T) {
 agents:
   - name: engineering-assistant
     driver: codex
-    bots: [bot]
     codex:
 `+test.config)
 			_, err := Load(path)
@@ -751,10 +746,8 @@ func TestLoad_MultipleAgents(t *testing.T) {
 	path := writeConfig(t, minimalBot+`
 agents:
   - name: reviewer
-    when: direct
     command: claude -p "review code"
   - name: triage
-    when: mentions
     command: aider --check
 `)
 	cfg, err := Load(path)
@@ -769,6 +762,149 @@ agents:
 	}
 	if cfg.Agents[1].Name != "triage" {
 		t.Errorf("expected second agent 'triage', got %q", cfg.Agents[1].Name)
+	}
+}
+
+func TestLoad_BotAgentBindings(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: bot
+    type: discord
+    bot_token: tok
+    agents:
+      - agent: reviewer
+        when: 'channel == "#reviews"'
+      - agent: triage
+        when: direct
+      - agent: triage
+        when: true
+agents:
+  - name: reviewer
+    driver: codex
+  - name: triage
+    driver: claude
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Bots[0].Agents) != 3 {
+		t.Fatalf("unexpected bindings: %+v", cfg.Bots[0].Agents)
+	}
+	if cfg.Bots[0].Agents[0].Agent != "reviewer" ||
+		cfg.Bots[0].Agents[1].When != "direct" ||
+		cfg.Bots[0].Agents[2].When != "true" {
+		t.Fatalf("binding order or values changed: %+v", cfg.Bots[0].Agents)
+	}
+}
+
+func TestLoad_BindingDefaultsToNotify(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: bot
+    type: local
+    agents:
+      - agent: assistant
+agents:
+  - name: assistant
+    driver: codex
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Bots[0].Agents[0].When; got != "notify" {
+		t.Fatalf("expected notify default, got %q", got)
+	}
+}
+
+func TestLoad_TimeBasedBinding(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: automation
+    type: local
+    agents:
+      - name: morning-review
+        agent: assistant
+        when: 'at("09:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
+        timezone: Europe/London
+        prompt: Review the repository.
+agents:
+  - name: assistant
+    driver: codex
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	binding := cfg.Bots[0].Agents[0]
+	if binding.Name != "morning-review" ||
+		binding.Timezone != "Europe/London" ||
+		binding.Prompt != "Review the repository." {
+		t.Fatalf("unexpected scheduled binding: %+v", binding)
+	}
+}
+
+func TestLoad_TimeBasedBindingValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding string
+		want    string
+	}{
+		{"name", `agent: assistant
+        when: 'at("09:00")'
+        prompt: Review.`, "requires name"},
+		{"prompt", `name: morning
+        agent: assistant
+        when: 'at("09:00")'`, "requires prompt"},
+		{"timezone", `name: morning
+        agent: assistant
+        when: 'at("09:00")'
+        timezone: Moon/Base
+        prompt: Review.`, "invalid timezone"},
+		{"destination", `name: morning
+        agent: assistant
+        when: 'at("09:00")'
+        prompt: Review.`, "requires channel or target"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			botType := "local"
+			botToken := ""
+			if test.name == "destination" {
+				botType = "discord"
+				botToken = "\n    bot_token: tok"
+			}
+			path := writeConfig(t, fmt.Sprintf(`
+bots:
+  - name: bot
+    type: %s%s
+    agents:
+      - %s
+agents:
+  - name: assistant
+    driver: codex
+`, botType, botToken, test.binding))
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+		})
+	}
+}
+
+func TestLoad_RejectsLegacyAgentRouting(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: assistant
+    driver: codex
+    bots: [bot]
+    when: direct
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "field bots not found") {
+		t.Fatalf("expected legacy routing parse error, got %v", err)
 	}
 }
 

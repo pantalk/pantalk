@@ -16,6 +16,13 @@ type Connector interface {
 	Identity() string
 }
 
+// ChannelResolver canonicalizes a configured channel selector before Pantalk
+// creates an initiated or scheduled conversation. Connectors that support
+// friendly names return both the stable provider ID and display name.
+type ChannelResolver interface {
+	ResolveChannel(ctx context.Context, channel string) (id string, name string, err error)
+}
+
 // AttachmentSender is implemented by connectors that deliver the local files
 // listed in Request.Attach. The daemon checks for it before dispatching a send
 // that carries attachments, so a connector without support fails the request

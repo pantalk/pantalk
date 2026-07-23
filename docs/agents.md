@@ -1,373 +1,279 @@
 # Agents
 
-Pantalk routes matching messages to configured agents. An agent uses one of three
-drivers:
+Pantalk separates reusable agent definitions from bot-specific routing.
 
-- `codex` keeps a native Codex app-server process connected, maintains a
-  thread per conversation, and returns the final response through the
-  originating bot.
-- `claude` invokes the locally configured Claude Code CLI, resumes a durable
-  session per conversation, and returns the final response through the
-  originating bot.
-- `command` launches a CLI command reactively. It retains the original
-  fire-and-forget behavior: the command reads notifications itself via
-  `pantalk notifications`; events are not piped to stdin.
+- Top-level `agents` describe how Codex, Claude Code, or a command starts.
+- Each bot contains an ordered `agents` list describing when it uses those
+  definitions.
+- One agent runtime can serve multiple bots and conversations.
+- Persistent sessions remain isolated by agent, service, bot, DM, channel, and
+  thread.
 
-See [Native Codex agent](codex-agent.md) and
-[Claude Code agent](claude-agent.md) for the conversational drivers. The rest
-of this guide describes matching and the command driver.
-
-## Quick Example
+## Complete example
 
 ```yaml
+agents:
+  - name: codex
+    driver: codex
+    workdir: /home/me/project
+    timeout: 900
+    instructions: |
+      You are the primary engineering assistant.
+    codex:
+      sandbox: workspace-write
+      approval_policy: never
+
+  - name: claude
+    driver: claude
+    workdir: /home/me/project
+    timeout: 900
+    instructions: |
+      You are the code-review assistant.
+    claude:
+      permission_mode: plan
+
 bots:
-  - name: ops-bot
+  - name: company-slack
     type: slack
     bot_token: $SLACK_BOT_TOKEN
     app_level_token: $SLACK_APP_LEVEL_TOKEN
 
-agents:
-  - name: responder
-    driver: command
-    bots:
-      - ops-bot
-    when: "direct || mentions"
-    command: claude -p "Check pantalk notifications and respond"
-    workdir: /home/user/project
+    agents:
+      - agent: claude
+        when: 'channel == "#code-review"'
+
+      - agent: codex
+        when: direct
+
+      - agent: codex
+        when: true
+
+  - name: local-automation
+    type: local
+
+    agents:
+      - name: morning-review
+        agent: codex
+        when: 'at("09:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
+        timezone: Europe/London
+        prompt: |
+          Review the repository and summarize today's priorities.
 ```
 
-When someone DMs the bot or @mentions it, `pantalkd` waits 30 seconds (batching), then launches `claude` with the given prompt. The agent calls `pantalk notifications --unseen` to read what happened and acts on it.
+## Agent definitions
 
-## Configuration
-
-Each agent is defined under the `agents` key in your config:
+### Codex
 
 ```yaml
 agents:
-  - name: responder              # required - unique identifier
-    driver: command              # optional for legacy command configs
-    bots: [ops-bot]              # optional bot-name allowlist
-    when: "direct || mentions"   # expression (default: "notify")
-    command: claude -p "Check notifications"  # required
-    workdir: /home/user/project  # optional - inherits daemon's cwd
-    buffer: 30                   # seconds to batch events (default: 30)
-    timeout: 120                 # kill after N seconds (default: 120)
-    cooldown: 60                 # min gap between runs (default: 60)
+  - name: engineering
+    driver: codex
+    workdir: /home/me/project
+    timeout: 900
+    instructions: |
+      Answer engineering questions and work in this repository.
+    codex:
+      binary: /usr/local/bin/codex # optional; defaults to codex on PATH
+      model: gpt-5.4              # optional; otherwise local default
+      effort: high                # optional
+      sandbox: workspace-write
+      approval_policy: never
 ```
 
-### Fields
+Pantalk owns one `codex app-server --stdio` process for this definition. It
+creates or resumes a durable Codex thread for every Pantalk conversation.
 
-| Field      | Required | Default    | Description                                               |
-| ---------- | -------- | ---------- | --------------------------------------------------------- |
-| `name`     | yes      | -          | Unique identifier, used in log messages                   |
-| `driver`   | no       | `command` when `command` exists | `command`, `codex`, or `claude`       |
-| `bots`     | no       | all bots for `command` | Configured bot names this agent may consume      |
-| `when`     | no       | `"notify"` | Boolean expression evaluated against each event           |
-| `command`  | command driver | -    | Binary + args to exec (string or array)                   |
-| `workdir`  | no       | daemon cwd | Working directory for the command                         |
-| `buffer`   | no       | `30`       | Seconds to wait and batch events before launching         |
-| `timeout`  | no       | `120`      | Maximum runtime in seconds before the process is killed   |
-| `cooldown` | no       | `60`       | Minimum seconds between consecutive runs of this agent    |
-
-### Command Format
-
-The `command` field accepts both a string and an array. It is **exec'd directly** - never passed through a shell.
+### Claude Code
 
 ```yaml
-# String form - tokenized with shell-like quoting (no variable expansion)
-command: claude -p "Check pantalk notifications and respond"
-
-# Array form - each element is a separate argv entry
-command:
-  - claude
-  - -p
-  - "Check pantalk notifications and respond"
-```
-
-Both forms produce the same argv: `["claude", "-p", "Check pantalk notifications and respond"]`.
-
-## When Expressions
-
-The `when` field uses the [expr](https://github.com/expr-lang/expr) expression language. Expressions are boolean and evaluated against each inbound message event.
-
-### Available Fields
-
-**Event fields** - populated on message events, zero on tick events:
-
-| Field      | Type   | Description                                      |
-| ---------- | ------ | ------------------------------------------------ |
-| `notify`   | bool   | Event is a notification (DM, mention, or thread) |
-| `direct`   | bool   | Event is a direct message to the bot             |
-| `mentions` | bool   | Event mentions the bot                           |
-| `channel`  | string | Channel name or ID (e.g. `"#general"`)           |
-| `thread`   | string | Thread ID (empty if not in a thread)             |
-| `bot`      | string | Bot name from config                             |
-| `service`  | string | Platform type (`"slack"`, `"discord"`, etc.)     |
-| `user`     | string | User ID of the message author                    |
-| `text`     | string | Message text content                             |
-
-**Time fields** - populated on tick events (1-minute internal clock), zero on message events:
-
-| Field      | Type   | Description                                      |
-| ---------- | ------ | ------------------------------------------------ |
-| `tick`     | bool   | True on clock tick events                        |
-| `hour`     | int    | Current hour (0–23)                              |
-| `minute`   | int    | Current minute (0–59)                            |
-| `weekday`  | string | Day name: `"mon"`, `"tue"`, ..., `"sun"`         |
-
-### Time Functions
-
-| Function             | Description                                         |
-| -------------------- | --------------------------------------------------- |
-| `at("HH:MM", ...)`  | True when current time matches any listed time      |
-| `every("Nm")`        | True on aligned minute intervals (e.g. :00, :15, :30, :45 for `"15m"`) |
-| `every("Nh")`        | True on aligned hour intervals at minute :00        |
-
-### Operators
-
-| Operator  | Example                                  |
-| --------- | ---------------------------------------- |
-| `&&`      | `notify && bot == "ops-bot"`             |
-| `\|\|`    | `direct \|\| mentions`                   |
-| `!`       | `notify && !direct`                      |
-| `==`      | `channel == "#incidents"`                |
-| `!=`      | `service != "telegram"`                  |
-| `in`      | `channel in ["#incidents", "#alerts"]`   |
-| `matches` | `text matches "deploy\|rollback"`        |
-| `()`      | `(direct && text matches "deploy") \|\| mentions` |
-
-### Examples
-
-```yaml
-# Default - trigger on any notification
-when: "notify"
-
-# Only direct messages
-when: "direct"
-
-# DMs or @mentions
-when: "direct || mentions"
-
-# Notifications in a specific channel
-when: 'notify && channel == "#incidents"'
-
-# Multiple channels
-when: 'notify && channel in ["#incidents", "#alerts"]'
-
-# Only from a specific bot
-when: 'notify && bot == "ops-bot"'
-
-# Only from a specific platform
-when: 'service == "slack" && notify'
-
-# Text content matching (regex)
-when: 'notify && text matches "deploy|rollback|hotfix"'
-
-# Threaded messages only
-when: 'notify && thread != ""'
-
-# Complex: DMs about deploys OR any mention in #ops
-when: '(direct && text matches "deploy") || (mentions && channel == "#ops")'
-
-# Match all inbound messages (not just notifications)
-when: "true"
-
-# Everything except DMs
-when: "notify && !direct"
-```
-
-### Time-Based Examples
-
-```yaml
-# Run at specific times
-when: 'at("9:00")'
-when: 'at("9:00", "12:30", "17:00")'    # variadic - multiple times
-
-# Run on intervals
-when: 'every("15m")'                     # :00, :15, :30, :45
-when: 'every("2h")'                      # 0:00, 2:00, 4:00, ...
-when: 'every("10m")'                     # :00, :10, :20, ...
-
-# Weekday mornings only
-when: 'at("9:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
-
-# Business hours only
-when: 'every("15m") && hour >= 9 && hour < 17'
-
-# Mix time + events - wake on schedule OR when someone DMs
-when: 'at("9:00", "17:00") || direct'
-when: 'every("30m") || mentions'
-```
-
-Time expressions only fire on the daemon's internal 1-minute clock. The default `when: "notify"` does **not** match clock ticks - you must explicitly use `at()`, `every()`, or the `tick` field.
-
-## Security
-
-Agent commands are restricted to a set of known AI agent binaries by default:
-
-| Binary     |
-| ---------- |
-| `claude`   |
-| `codex`    |
-| `copilot`  |
-| `aider`    |
-| `goose`    |
-| `opencode` |
-| `gemini`   |
-
-If the first token of `command` is not in this list, config validation fails:
-
-```
-agent "deploy-hook": command "bash" is not in the allowed list
-(claude, codex, copilot, aider, goose, opencode, gemini);
-start pantalkd with --allow-exec to permit arbitrary commands
-```
-
-### `--allow-exec`
-
-To run arbitrary commands, start the daemon with the `--allow-exec` flag:
-
-```bash
-pantalkd --allow-exec
-```
-
-This bypasses the binary allowlist entirely. Use with caution - the command has the same privileges as the `pantalkd` process.
-
-### Path-qualified binaries
-
-Full paths are supported. The binary name is extracted for allowlist checking:
-
-```yaml
-# Allowed - filepath.Base extracts "claude"
-command: /usr/local/bin/claude -p "Check notifications"
-```
-
-### No shell interpretation
-
-Commands are **never** passed through a shell. There is no variable expansion, globbing, or piping. The command string is tokenized with simple quoting rules:
-
-- Single quotes preserve literal content: `'hello world'` → `hello world`
-- Double quotes allow backslash escapes: `"say \"hi\""` → `say "hi"`
-- No `$VAR` expansion, no `~`, no `*`
-
-## Lifecycle
-
-```
-Event arrives               Clock tick (every 1 min)
-    │                              │
-    ▼                              ▼
-Matches(event)          ← expression evaluated
-    │ yes
-    ▼
-Handle(event)           ← event buffered
-    │
-    ▼
-  ┌─────────────┐
-  │ Buffer timer │  (default 30s - batches rapid events)
-  └──────┬──────┘
-         ▼
-  ┌──────────────┐
-  │ Cooldown OK? │  ← last run finished > cooldown ago?
-  └──────┬───────┘
-     no  │  yes
-     ▼   ▼
-  retry  │
-  later  │
-         ▼
-  ┌──────────────┐
-  │ Already      │  ← only one instance per agent at a time
-  │ running?     │
-  └──────┬───────┘
-     yes │  no
-     ▼   ▼
-  retry  │
-  later  │
-         ▼
-   exec command        ← direct exec, no shell
-         │
-         ▼
-   log output + status
-```
-
-### Buffering
-
-When the first matching event arrives, a timer starts (default 30 seconds). Additional events during this window accumulate silently. When the timer fires, the agent launches with the total count logged. This prevents an agent from launching on every single message in a busy channel.
-
-### Cooldown
-
-After a run completes, the agent enters a cooldown period (default 60 seconds). Events arriving during cooldown are re-buffered and the timer is rescheduled.
-
-### Concurrency
-
-Only one instance of each agent can run at a time. If the agent is still running when new events arrive and the buffer fires, the launch is deferred and retried after 5 seconds.
-
-### Timeout
-
-If the agent process exceeds its timeout (default 120 seconds), it is killed via `context.WithTimeout`.
-
-## Full Example
-
-```yaml
-server:
-  notification_history_size: 1000
-
-bots:
-  - name: ops-bot
-    type: slack
-    bot_token: $SLACK_BOT_TOKEN
-    app_level_token: $SLACK_APP_LEVEL_TOKEN
-    channels:
-      - C0123456789
-
 agents:
-  # Respond to DMs and mentions
-  - name: responder
-    when: "direct || mentions"
-    command: claude -p "Check pantalk notifications --unseen and respond to each"
-    workdir: /home/user/project
-    buffer: 15
-    timeout: 180
-    cooldown: 30
-
-  # Watch for incidents
-  - name: incident-triage
-    when: 'notify && channel == "#incidents"'
-    command: claude -p "Triage the latest incident from pantalk notifications"
-    workdir: /home/user/ops
-    buffer: 10
-    timeout: 300
-    cooldown: 120
-
-  # Code review requests
   - name: reviewer
-    when: 'notify && text matches "review|PR|pull request"'
-    command:
-      - aider
-      - --check
-    workdir: /home/user/repos
-
-  # Morning digest - weekdays at 9 AM
-  - name: morning-digest
-    when: 'at("9:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
-    command: claude -p "Summarize overnight pantalk notifications"
-    workdir: /home/user/project
-    timeout: 300
-
-  # Periodic check + DM trigger - every 30 min OR direct message
-  - name: periodic
-    when: 'every("30m") || direct'
-    command: claude -p "Check pantalk notifications --unseen and respond"
-    workdir: /home/user/project
+    driver: claude
+    workdir: /home/me/project
+    timeout: 900
+    instructions: |
+      Review code and explain findings.
+    claude:
+      binary: /usr/local/bin/claude # optional; defaults to claude on PATH
+      model: sonnet                  # optional
+      effort: high                   # optional
+      permission_mode: plan
+      allowed_tools: [Read, Grep, Glob]
+      disallowed_tools: [Edit, Write]
 ```
 
-## How Agents Read Notifications
+Claude Code authentication and omitted settings come from the local CLI
+installation. Pantalk persists Claude session IDs for conversation continuity.
 
-Agents are not given events on stdin. When launched, they use the standard `pantalk` CLI to read what triggered them:
+### Command
 
-```bash
-# Inside the agent's prompt or script
-pantalk notifications --unseen --limit 20
-pantalk notifications --unseen --clear
+```yaml
+agents:
+  - name: notification-checker
+    driver: command
+    command: claude -p "Check Pantalk notifications and respond"
+    workdir: /home/me/project
+    buffer: 30
+    timeout: 120
+    cooldown: 60
 ```
 
-This keeps the interface consistent - agents use the same CLI as interactive users.
+Command agents retain the fire-and-forget CLI workflow. Commands are executed
+directly without a shell. Only known agent binaries are allowed unless
+`pantalkd` starts with `--allow-exec`.
+
+An unbound agent definition is valid but its runtime is not started.
+
+## Bot bindings
+
+```yaml
+bots:
+  - name: engineering-slack
+    type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
+
+    agents:
+      - agent: reviewer
+        when: 'channel == "#reviews"'
+
+      - agent: engineering
+        when: 'direct || mentions'
+
+      - agent: engineering
+        when: true
+```
+
+For an inbound message, bindings are evaluated in their written order and the
+first matching binding wins. Consequently, fallback rules belong last.
+
+If `when` is omitted, it defaults to `notify`. A notification is an inbound
+message that is a DM, mentions the bot, or continues a conversation in which
+the bot has participated.
+
+Useful expression fields:
+
+| Field          | Meaning                                      |
+| -------------- | -------------------------------------------- |
+| `notify`       | Normal Pantalk notification                  |
+| `direct`       | Direct message                               |
+| `mentions`     | Message explicitly mentions the bot          |
+| `channel`      | Alias-aware channel reference                |
+| `channel_id`   | Raw provider channel identifier              |
+| `channel_name` | Friendly channel name when available         |
+| `thread`       | Provider thread identifier                    |
+| `bot`          | Configured bot name                           |
+| `service`      | Integration type                              |
+| `user`         | Provider user identifier                      |
+| `text`         | Message text                                  |
+
+Examples:
+
+```yaml
+when: direct
+when: 'direct || mentions'
+when: 'channel == "#incidents"'
+when: 'channel == "C0123456789"'
+when: 'channel in ["#incidents", "#alerts"]'
+when: 'text matches "deploy|rollback|hotfix"'
+when: 'thread != ""'
+when: true
+```
+
+The `channel` value compares against either the stable provider ID or the
+friendly name. Slack names may be written with or without `#`.
+
+## Scheduled bindings
+
+Time expressions live in the same bot-to-agent binding:
+
+```yaml
+bots:
+  - name: local-automation
+    type: local
+    agents:
+      - name: morning-review
+        agent: engineering
+        when: 'at("09:00") && weekday in ["mon", "tue", "wed", "thu", "fri"]'
+        timezone: Europe/London
+        prompt: |
+          Review the repository and summarize today's priorities.
+
+      - name: periodic-check
+        agent: engineering
+        when: 'every("30m")'
+        timezone: UTC
+        prompt: |
+          Check for important outstanding work.
+```
+
+Time-based bindings require:
+
+- A unique `name` within the bot.
+- A `prompt` used as the scheduled turn text.
+- An optional IANA `timezone`; it defaults to `UTC`.
+
+Local schedules derive a stable channel named `schedule:<binding-name>`.
+This gives persistent agents a durable conversation and makes replies visible
+through Pantalk's local history and chat surfaces.
+
+A scheduled binding on a network bot must provide a `channel` or `target`:
+
+```yaml
+bots:
+  - name: company-slack
+    type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
+    agents:
+      - name: morning-report
+        agent: engineering
+        when: 'at("09:00")'
+        timezone: Europe/London
+        channel: "#engineering"
+        prompt: Prepare the morning engineering report.
+```
+
+Every due time-based binding runs independently. Ordinary message fallbacks
+such as `when: true` are not evaluated on clock ticks. Pantalk suppresses
+duplicate execution of the same scheduled minute during config reloads.
+Schedules do not catch up occurrences missed while the daemon was offline.
+
+## Direct messages and channel allowlists
+
+`when: direct` is provider-neutral. Slack `D…` conversations, Discord private
+channels, Telegram private chats, Mattermost direct channels, WhatsApp direct
+chats, Zulip private messages, SMS, iMessage DMs, and IRC private messages are
+normalized to the same expression field.
+
+Provider `channels` lists remain ingress restrictions rather than agent
+routing. Direct messages are admitted independently where the provider clearly
+distinguishes them; use the bot bindings to decide whether an agent responds.
+
+## Breaking configuration change
+
+Routing no longer belongs in top-level agent definitions. The following old
+shape is rejected:
+
+```yaml
+agents:
+  - name: engineering
+    driver: codex
+    bots: [company-slack]
+    when: direct
+```
+
+Move the routing fields into the relevant bot:
+
+```yaml
+agents:
+  - name: engineering
+    driver: codex
+
+bots:
+  - name: company-slack
+    type: slack
+    agents:
+      - agent: engineering
+        when: direct
+```

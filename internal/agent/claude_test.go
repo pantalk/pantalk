@@ -56,7 +56,6 @@ func TestClaudeRuntimeStartsSessionPersistsAndResumes(t *testing.T) {
 	replies := make(chan string, 2)
 	runtime, err := NewClaudeRuntime(context.Background(), ClaudeRuntimeConfig{
 		Name:    "claude-engineering",
-		Bots:    []string{"local-test"},
 		Timeout: time.Second,
 	}, client, sessions, func(_ context.Context, _ protocol.Event, text string) error {
 		replies <- text
@@ -148,7 +147,6 @@ func TestClaudeRuntimeUsesPersistedSession(t *testing.T) {
 	replied := make(chan struct{}, 1)
 	runtime, err := NewClaudeRuntime(context.Background(), ClaudeRuntimeConfig{
 		Name: "claude-engineering",
-		Bots: []string{"engineering-slack"},
 	}, client, sessions, func(context.Context, protocol.Event, string) error {
 		replied <- struct{}{}
 		return nil

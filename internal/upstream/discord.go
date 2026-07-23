@@ -205,7 +205,8 @@ func (d *DiscordConnector) onMessageCreate(_ *discordgo.Session, message *discor
 		return
 	}
 
-	if !d.acceptsChannel(message.ChannelID) {
+	direct := strings.TrimSpace(message.GuildID) == ""
+	if !direct && !d.acceptsChannel(message.ChannelID) {
 		return
 	}
 
@@ -224,6 +225,7 @@ func (d *DiscordConnector) onMessageCreate(_ *discordgo.Session, message *discor
 		Target:    "channel:" + message.ChannelID,
 		Channel:   message.ChannelID,
 		Thread:    thread,
+		Direct:    direct,
 		Text:      message.Content,
 	}
 

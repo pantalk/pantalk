@@ -177,7 +177,8 @@ func (w *WhatsAppConnector) handleMessage(msg *events.Message) {
 	}
 
 	chatJID := msg.Info.Chat.String()
-	if !w.acceptsChannel(chatJID) {
+	direct := !msg.Info.IsGroup
+	if !direct && !w.acceptsChannel(chatJID) {
 		return
 	}
 
@@ -205,6 +206,7 @@ func (w *WhatsAppConnector) handleMessage(msg *events.Message) {
 		Target:    "chat:" + chatJID,
 		Channel:   chatJID,
 		Thread:    thread,
+		Direct:    direct,
 		Text:      text,
 	})
 }

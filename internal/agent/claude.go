@@ -24,8 +24,6 @@ type ClaudeClient interface {
 // ClaudeRuntimeConfig configures one Claude Code conversational agent.
 type ClaudeRuntimeConfig struct {
 	Name      string
-	When      string
-	Bots      []string
 	Timeout   time.Duration
 	QueueSize int
 }
@@ -35,7 +33,6 @@ type ClaudeRuntimeConfig struct {
 // conversations may run concurrently as independent Claude CLI processes.
 type ClaudeRuntime struct {
 	cfg      ClaudeRuntimeConfig
-	matcher  *Matcher
 	client   ClaudeClient
 	sessions SessionStore
 	reply    ReplyFunc
@@ -73,10 +70,6 @@ func NewClaudeRuntime(
 		return nil, fmt.Errorf("agent %q: reply callback is required", cfg.Name)
 	}
 
-	matcher, err := NewMatcher(cfg.Name, cfg.When, cfg.Bots)
-	if err != nil {
-		return nil, err
-	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 120 * time.Second
 	}
@@ -87,7 +80,6 @@ func NewClaudeRuntime(
 	ctx, cancel := context.WithCancel(parent)
 	return &ClaudeRuntime{
 		cfg:      cfg,
-		matcher:  matcher,
 		client:   client,
 		sessions: sessions,
 		reply:    reply,
@@ -99,16 +91,6 @@ func NewClaudeRuntime(
 }
 
 func (r *ClaudeRuntime) Name() string { return r.cfg.Name }
-
-func (r *ClaudeRuntime) When() string { return r.matcher.When() }
-
-func (r *ClaudeRuntime) Matches(event protocol.Event) bool {
-	return r.matcher.Matches(event)
-}
-
-func (r *ClaudeRuntime) NeedsTick() bool {
-	return r.matcher.NeedsTick()
-}
 
 // Handle queues a matching event without blocking the provider receive loop.
 func (r *ClaudeRuntime) Handle(event protocol.Event) {

@@ -7,10 +7,7 @@ import "github.com/pantalk/pantalk/internal/protocol"
 // long-running agent process, while the server retains one routing path.
 type Runtime interface {
 	Name() string
-	When() string
-	Matches(protocol.Event) bool
 	Handle(protocol.Event)
-	NeedsTick() bool
 	Stop()
 }
 

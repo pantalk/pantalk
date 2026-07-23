@@ -336,6 +336,7 @@ func (t *TwilioConnector) handleIncomingMessage(msg twilioMessage) {
 		Target:    "phone:" + from,
 		Channel:   from,
 		Thread:    msg.SID,
+		Direct:    true,
 		Text:      text,
 	})
 }

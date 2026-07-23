@@ -4,6 +4,28 @@ All notable changes to Pantalk are documented here, following [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-07-23
+
+### Added
+
+- Add ordered per-bot agent bindings with expression-based routing, reusable
+  Codex, Claude, and command agent definitions, and first-match message
+  dispatch.
+- Add bot-scoped scheduled agent bindings using `at()` and `every()`, IANA
+  timezones, stable local schedule conversations, prompts, external
+  destinations, and duplicate-minute suppression.
+- Add alias-aware channel expressions so Slack routes can match either raw
+  channel IDs or friendly `#channel` names.
+
+### Changed
+
+- Move `when` and bot selection from global agent definitions into each bot's
+  `agents` list. The old `agents[].bots` and `agents[].when` configuration is
+  intentionally rejected.
+- Normalize direct-message routing across supported messaging connectors and
+  keep DMs independent from ordinary channel allowlists where the provider
+  exposes a distinct direct-message type.
+
 ## [0.0.6] - 2026-07-23
 
 ### Added
