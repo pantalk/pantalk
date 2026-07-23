@@ -34,6 +34,63 @@ func makeEvent(service, bot, text, direction string) protocol.Event {
 	}
 }
 
+func TestAgentSessionLifecycle(t *testing.T) {
+	s := openTestStore(t)
+
+	if threadID, found, err := s.AgentSession("engineering", "slack/bot/DM/U1"); err != nil {
+		t.Fatalf("read missing agent session: %v", err)
+	} else if found || threadID != "" {
+		t.Fatalf("missing session returned thread=%q found=%v", threadID, found)
+	}
+
+	if err := s.SaveAgentSession("engineering", "slack/bot/DM/U1", "thread-1"); err != nil {
+		t.Fatalf("save agent session: %v", err)
+	}
+
+	threadID, found, err := s.AgentSession("engineering", "slack/bot/DM/U1")
+	if err != nil {
+		t.Fatalf("read agent session: %v", err)
+	}
+	if !found || threadID != "thread-1" {
+		t.Fatalf("session returned thread=%q found=%v", threadID, found)
+	}
+
+	if err := s.SaveAgentSession("engineering", "slack/bot/DM/U1", "thread-2"); err != nil {
+		t.Fatalf("update agent session: %v", err)
+	}
+
+	threadID, found, err = s.AgentSession("engineering", "slack/bot/DM/U1")
+	if err != nil {
+		t.Fatalf("read updated agent session: %v", err)
+	}
+	if !found || threadID != "thread-2" {
+		t.Fatalf("updated session returned thread=%q found=%v", threadID, found)
+	}
+}
+
+func TestSaveAgentSessionRequiresIdentifiers(t *testing.T) {
+	s := openTestStore(t)
+
+	tests := []struct {
+		name            string
+		agent           string
+		conversationKey string
+		threadID        string
+	}{
+		{name: "agent", conversationKey: "conversation", threadID: "thread"},
+		{name: "conversation", agent: "agent", threadID: "thread"},
+		{name: "thread", agent: "agent", conversationKey: "conversation"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := s.SaveAgentSession(test.agent, test.conversationKey, test.threadID); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestInsertAndListEvents(t *testing.T) {
 	s := openTestStore(t)
 

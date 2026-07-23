@@ -107,6 +107,21 @@ bots:
 	}
 }
 
+func TestLoad_MinimalLocalConfig(t *testing.T) {
+	path := writeConfig(t, `
+bots:
+  - name: local-test
+    type: local
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Bots) != 1 || cfg.Bots[0].Type != "local" {
+		t.Fatalf("unexpected bots: %+v", cfg.Bots)
+	}
+}
+
 func TestLoad_Defaults(t *testing.T) {
 	path := writeConfig(t, `
 bots:
@@ -429,6 +444,175 @@ agents:
 	}
 	if a.Cooldown != 120 {
 		t.Errorf("expected cooldown=120, got %d", a.Cooldown)
+	}
+}
+
+func TestLoad_CodexAgent(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: engineering-assistant
+    driver: codex
+    bots: [bot]
+    when: notify
+    workdir: /tmp/project
+    timeout: 900
+    instructions: |
+      Help with engineering requests.
+    codex:
+      binary: /usr/local/bin/codex
+      model: gpt-5.4
+      effort: high
+      sandbox: workspace-write
+      approval_policy: on-request
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a := cfg.Agents[0]
+	if a.Driver != "codex" || len(a.Bots) != 1 || a.Bots[0] != "bot" {
+		t.Fatalf("unexpected codex routing config: %+v", a)
+	}
+	if a.Codex.Binary != "/usr/local/bin/codex" ||
+		a.Codex.Model != "gpt-5.4" ||
+		a.Codex.Effort != "high" ||
+		a.Codex.Sandbox != "workspace-write" ||
+		a.Codex.ApprovalPolicy != "on-request" {
+		t.Fatalf("unexpected codex overrides: %+v", a.Codex)
+	}
+}
+
+func TestLoad_CodexAgentRequiresBot(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: engineering-assistant
+    driver: codex
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "requires at least one bot") {
+		t.Fatalf("expected missing bot error, got %v", err)
+	}
+}
+
+func TestLoad_ClaudeAgent(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: claude-engineering
+    driver: claude
+    bots: [bot]
+    when: notify
+    workdir: /tmp/project
+    timeout: 900
+    instructions: |
+      Help with engineering requests.
+    claude:
+      binary: /usr/local/bin/claude
+      model: sonnet
+      effort: high
+      permission_mode: plan
+      allowed_tools: [Read, Grep]
+      disallowed_tools: [Edit, Write]
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a := cfg.Agents[0]
+	if a.Driver != "claude" || len(a.Bots) != 1 || a.Bots[0] != "bot" {
+		t.Fatalf("unexpected claude routing config: %+v", a)
+	}
+	if a.Claude.Binary != "/usr/local/bin/claude" ||
+		a.Claude.Model != "sonnet" ||
+		a.Claude.Effort != "high" ||
+		a.Claude.PermissionMode != "plan" {
+		t.Fatalf("unexpected claude overrides: %+v", a.Claude)
+	}
+	if len(a.Claude.AllowedTools) != 2 ||
+		a.Claude.AllowedTools[0] != "Read" ||
+		len(a.Claude.DisallowedTools) != 2 ||
+		a.Claude.DisallowedTools[0] != "Edit" {
+		t.Fatalf("unexpected Claude tool policy: %+v", a.Claude)
+	}
+}
+
+func TestLoad_ClaudeAgentRequiresBot(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: claude-engineering
+    driver: claude
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "requires at least one bot") {
+		t.Fatalf("expected missing bot error, got %v", err)
+	}
+}
+
+func TestLoad_ClaudeAgentRejectsUnsupportedPermissionMode(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: claude-engineering
+    driver: claude
+    bots: [bot]
+    claude:
+      permission_mode: unrestricted
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported claude permission_mode") {
+		t.Fatalf("expected permission mode error, got %v", err)
+	}
+}
+
+func TestLoad_AgentRejectsUnknownBot(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: engineering-assistant
+    driver: codex
+    bots: [missing]
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `unknown bot "missing"`) {
+		t.Fatalf("expected unknown bot error, got %v", err)
+	}
+}
+
+func TestLoad_CodexAgentRejectsUnsupportedSafetyOverrides(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name: "sandbox",
+			config: `
+      sandbox: unrestricted
+`,
+			want: "unsupported codex sandbox",
+		},
+		{
+			name: "approval policy",
+			config: `
+      approval_policy: always
+`,
+			want: "unsupported codex approval_policy",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfig(t, minimalBot+`
+agents:
+  - name: engineering-assistant
+    driver: codex
+    bots: [bot]
+    codex:
+`+test.config)
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+		})
 	}
 }
 

@@ -41,7 +41,7 @@ A `Makefile` is provided for building locally:
 make
 
 # Build with an explicit version
-make VERSION=v0.0.5
+make VERSION=v0.0.6
 
 # Cross-compile for a specific platform
 make cross GOOS=darwin GOARCH=arm64
@@ -49,9 +49,21 @@ make cross GOOS=darwin GOARCH=arm64
 # Run tests
 make test
 
+# Exercise the embedded local connector and Codex startup. Enter /quit after
+# the prompt appears. This uses disposable Pantalk state.
+./pantalk local --workdir . --ephemeral
+
+# Exercise the installed Claude Code integration with the same local connector.
+./pantalk local --driver claude --workdir . --ephemeral
+
 # Clean build artifacts
 make clean
 ```
+
+The Codex smoke test requires an installed and authenticated Codex CLI; check
+it with `codex login status`. The Claude smoke test similarly requires
+`claude auth status`. Automated release tests use fake protocol processes and
+do not require either credential or make model API calls.
 
 ## Update notifications
 

@@ -10,11 +10,85 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pantalk/pantalk/internal/agent"
+	"github.com/pantalk/pantalk/internal/claude"
+	"github.com/pantalk/pantalk/internal/codex"
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/protocol"
 	"github.com/pantalk/pantalk/internal/store"
 	"github.com/pantalk/pantalk/internal/upstream"
 )
+
+type serverFakeCodexClient struct {
+	mu      sync.Mutex
+	prompts []string
+	closed  bool
+}
+
+type serverFakeClaudeClient struct {
+	mu       sync.Mutex
+	sessions []string
+	prompts  []string
+	closed   bool
+}
+
+func (f *serverFakeClaudeClient) RunTurn(
+	_ context.Context,
+	sessionID string,
+	prompt string,
+) (claude.TurnResult, error) {
+	f.mu.Lock()
+	f.sessions = append(f.sessions, sessionID)
+	f.prompts = append(f.prompts, prompt)
+	f.mu.Unlock()
+	if sessionID == "" {
+		sessionID = "claude-local-session"
+	}
+	return claude.TurnResult{
+		SessionID: sessionID,
+		Subtype:   "success",
+		Text:      "native Claude reply",
+	}, nil
+}
+
+func (f *serverFakeClaudeClient) Close() error {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *serverFakeCodexClient) StartThread(context.Context, codex.ThreadOptions) (*codex.Thread, error) {
+	return &codex.Thread{ID: "thread-local-test"}, nil
+}
+
+func (f *serverFakeCodexClient) ResumeThread(context.Context, string, codex.ThreadOptions) (*codex.Thread, error) {
+	return nil, errors.New("unexpected resume")
+}
+
+func (f *serverFakeCodexClient) RunTurnWithOptions(
+	_ context.Context,
+	threadID string,
+	prompt string,
+	_ codex.TurnOptions,
+) (codex.TurnResult, error) {
+	f.mu.Lock()
+	f.prompts = append(f.prompts, prompt)
+	f.mu.Unlock()
+	return codex.TurnResult{
+		ThreadID: threadID,
+		TurnID:   "turn-local-test",
+		Status:   "completed",
+		Text:     "native Codex reply",
+	}, nil
+}
+
+func (f *serverFakeCodexClient) Close() error {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+	return nil
+}
 
 func TestBotKey(t *testing.T) {
 	tests := []struct {
@@ -316,6 +390,328 @@ func TestResolveBotService(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguous error, got: %v", err)
+	}
+}
+
+func TestHandleRequestInjectLocalMessage(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = notificationStore.Close() })
+
+	s := &Server{
+		bots: map[string]protocol.BotRef{
+			"local:local-test": {Service: "local", Name: "local-test"},
+		},
+		connectors:    make(map[string]upstream.Connector),
+		subsByBot:     make(map[string]map[chan protocol.Event]struct{}),
+		routesByBot:   make(map[string]map[string]struct{}),
+		notifications: notificationStore,
+	}
+	connector := upstream.NewLocalConnector("local-test", func(event protocol.Event) {
+		event.Service = "local"
+		event.Bot = "local-test"
+		s.publish(event)
+	})
+	s.connectors["local:local-test"] = connector
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action:  protocol.ActionInject,
+		Bot:     "local-test",
+		User:    "alice",
+		Target:  "channel:engineering",
+		Channel: "engineering",
+		Thread:  "thread-1",
+		Text:    "@local-test can you help?",
+	})
+	if !resp.OK {
+		t.Fatalf("inject failed: %s", resp.Error)
+	}
+	if resp.Event == nil || !resp.Event.Mentions || !resp.Event.Notify {
+		t.Fatalf("expected mention notification, got %+v", resp.Event)
+	}
+
+	events, err := notificationStore.ListEvents(store.EventFilter{
+		Service: "local",
+		Bot:     "local-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.User != "alice" || event.Target != "channel:engineering" ||
+		event.Channel != "engineering" || event.Thread != "thread-1" {
+		t.Fatalf("inbound fields were not preserved: %+v", event)
+	}
+}
+
+func TestHandleRequestInjectSelfDoesNotNotify(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = notificationStore.Close() })
+
+	s := &Server{
+		bots: map[string]protocol.BotRef{
+			"local:local-test": {Service: "local", Name: "local-test"},
+		},
+		connectors:    make(map[string]upstream.Connector),
+		subsByBot:     make(map[string]map[chan protocol.Event]struct{}),
+		routesByBot:   make(map[string]map[string]struct{}),
+		notifications: notificationStore,
+	}
+	connector := upstream.NewLocalConnector("local-test", func(event protocol.Event) {
+		event.Service = "local"
+		event.Bot = "local-test"
+		s.publish(event)
+	})
+	s.connectors["local:local-test"] = connector
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action: protocol.ActionInject,
+		Bot:    "local-test",
+		Self:   true,
+		Target: "user:alice",
+		Text:   "message from the bot",
+	})
+	if !resp.OK {
+		t.Fatalf("inject failed: %s", resp.Error)
+	}
+	if resp.Event == nil || !resp.Event.Self {
+		t.Fatalf("expected self event, got %+v", resp.Event)
+	}
+	if resp.Event.Notify {
+		t.Fatalf("self event must not notify: %+v", resp.Event)
+	}
+
+	stats, err := notificationStore.NotificationStats()
+	if err != nil {
+		t.Fatalf("notification stats: %v", err)
+	}
+	if stats.Total != 0 {
+		t.Fatalf("self injection created %d notifications, want 0", stats.Total)
+	}
+}
+
+func TestHandleRequestInjectRejectsNetworkConnector(t *testing.T) {
+	s := &Server{
+		bots: map[string]protocol.BotRef{
+			"test:bot": {Service: "test", Name: "bot"},
+		},
+		connectors: map[string]upstream.Connector{
+			"test:bot": upstream.NewMockConnector("test", "bot", func(protocol.Event) {}),
+		},
+	}
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action: protocol.ActionInject,
+		Bot:    "bot",
+		User:   "alice",
+		Target: "user:alice",
+		Text:   "hello",
+	})
+	if resp.OK || !strings.Contains(resp.Error, "does not accept local message injection") {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestLocalMessageFlowsThroughNativeCodexRuntime(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer notificationStore.Close()
+
+	cfg := config.Config{
+		Bots: []config.BotConfig{{
+			Name: "local-test",
+			Type: "local",
+		}},
+		Agents: []config.AgentConfig{{
+			Name:    "engineering",
+			Driver:  "codex",
+			Bots:    []string{"local-test"},
+			Timeout: 1,
+		}},
+	}
+	s := New(cfg, "", "", "")
+	s.rootCtx = context.Background()
+	s.notifications = notificationStore
+
+	fakeClient := &serverFakeCodexClient{}
+	s.startCodexClient = func(context.Context, codex.Config) (agent.CodexClient, error) {
+		return fakeClient, nil
+	}
+	if err := s.startConnectors(cfg); err != nil {
+		t.Fatalf("start connectors: %v", err)
+	}
+	defer s.stopAgentRuntime()
+
+	subscriptions := s.subscribe([]string{"local:local-test"})
+	defer s.unsubscribe([]string{"local:local-test"}, subscriptions)
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action: protocol.ActionInject,
+		Bot:    "local-test",
+		User:   "alice",
+		Target: "user:alice",
+		Text:   "please investigate",
+	})
+	if !resp.OK {
+		t.Fatalf("inject failed: %s", resp.Error)
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-subscriptions[0]:
+			if event.Kind != "message" || event.Direction != "out" {
+				continue
+			}
+			if event.Text != "native Codex reply" ||
+				event.Service != "local" ||
+				event.Bot != "local-test" ||
+				event.Target != "user:alice" {
+				t.Fatalf("unexpected outbound reply: %+v", event)
+			}
+
+			fakeClient.mu.Lock()
+			prompts := append([]string(nil), fakeClient.prompts...)
+			fakeClient.mu.Unlock()
+			if len(prompts) != 1 || prompts[0] != "please investigate" {
+				t.Fatalf("unexpected Codex prompts: %v", prompts)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("timed out waiting for native Codex reply")
+		}
+	}
+}
+
+func TestLocalMessageFlowsThroughClaudeRuntime(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer notificationStore.Close()
+
+	cfg := config.Config{
+		Bots: []config.BotConfig{{
+			Name: "local-test",
+			Type: "local",
+		}},
+		Agents: []config.AgentConfig{{
+			Name:    "local-claude",
+			Driver:  "claude",
+			Bots:    []string{"local-test"},
+			Timeout: 1,
+		}},
+	}
+	s := New(cfg, "", "", "")
+	s.rootCtx = context.Background()
+	s.notifications = notificationStore
+
+	fakeClient := &serverFakeClaudeClient{}
+	s.startClaudeClient = func(claude.Config) (agent.ClaudeClient, error) {
+		return fakeClient, nil
+	}
+	if err := s.startConnectors(cfg); err != nil {
+		t.Fatalf("start connectors: %v", err)
+	}
+	defer s.stopAgentRuntime()
+
+	subscriptions := s.subscribe([]string{"local:local-test"})
+	defer s.unsubscribe([]string{"local:local-test"}, subscriptions)
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action: protocol.ActionInject,
+		Bot:    "local-test",
+		User:   "alice",
+		Target: "user:alice",
+		Text:   "please investigate",
+	})
+	if !resp.OK {
+		t.Fatalf("inject failed: %s", resp.Error)
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-subscriptions[0]:
+			if event.Kind != "message" || event.Direction != "out" {
+				continue
+			}
+			if event.Text != "native Claude reply" ||
+				event.Service != "local" ||
+				event.Bot != "local-test" ||
+				event.Target != "user:alice" {
+				t.Fatalf("unexpected outbound reply: %+v", event)
+			}
+
+			fakeClient.mu.Lock()
+			prompts := append([]string(nil), fakeClient.prompts...)
+			fakeClient.mu.Unlock()
+			if len(prompts) != 1 || prompts[0] != "please investigate" {
+				t.Fatalf("unexpected Claude prompts: %v", prompts)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("timed out waiting for native Claude reply")
+		}
+	}
+}
+
+func TestRunContextSignalsReadinessAndStopsOnCancellation(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := config.Config{
+		Server: config.ServerConfig{
+			SocketPath: filepath.Join(stateDir, "pantalk.sock"),
+			DBPath:     filepath.Join(stateDir, "pantalk.db"),
+			Media: config.MediaConfig{
+				Backend: config.MediaBackendNone,
+			},
+		},
+		Bots: []config.BotConfig{{
+			Name: "local-test",
+			Type: "local",
+		}},
+	}
+	s := New(cfg, "", "", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- s.RunContext(ctx)
+	}()
+
+	select {
+	case <-s.Ready():
+	case err := <-done:
+		t.Fatalf("server stopped before ready: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for server readiness")
+	}
+
+	resp := s.handleRequest(context.Background(), protocol.Request{Action: protocol.ActionPing})
+	if !resp.OK || resp.Ack != "pong" {
+		t.Fatalf("unexpected ping response: %+v", resp)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run context: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for server shutdown")
 	}
 }
 

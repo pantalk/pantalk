@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/pantalk/pantalk/internal/agent"
+	"github.com/pantalk/pantalk/internal/claude"
+	"github.com/pantalk/pantalk/internal/codex"
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/media"
 	"github.com/pantalk/pantalk/internal/protocol"
@@ -35,6 +37,8 @@ type Server struct {
 	allowExec      bool
 
 	startedAt time.Time
+	ready     chan struct{}
+	readyOnce sync.Once
 
 	rootCtx       context.Context
 	runtimeCancel context.CancelFunc
@@ -46,13 +50,16 @@ type Server struct {
 	connectors    map[string]upstream.Connector
 	notifications *store.Store
 	attachments   media.Store
-	agents        []*agent.Runner
+	agents        []agent.Runtime
 	tickStop      chan struct{} // closed to stop the clock ticker
 	typing        map[string]*typingLease
 
 	// Typing lease timing overrides; zero means the package defaults.
 	typingPulse time.Duration
 	typingTTL   time.Duration
+
+	startCodexClient  func(context.Context, codex.Config) (agent.CodexClient, error)
+	startClaudeClient func(claude.Config) (agent.ClaudeClient, error)
 }
 
 func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride string) *Server {
@@ -65,6 +72,13 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 		subsByBot:      make(map[string]map[chan protocol.Event]struct{}),
 		routesByBot:    make(map[string]map[string]struct{}),
 		connectors:     make(map[string]upstream.Connector),
+		ready:          make(chan struct{}),
+		startCodexClient: func(ctx context.Context, cfg codex.Config) (agent.CodexClient, error) {
+			return codex.Start(ctx, cfg)
+		},
+		startClaudeClient: func(cfg claude.Config) (agent.ClaudeClient, error) {
+			return claude.New(cfg)
+		},
 	}
 }
 
@@ -400,6 +414,24 @@ func (s *Server) SetAllowExec(enabled bool) {
 func (s *Server) Run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	return s.RunContext(ctx)
+}
+
+// Ready is closed after the socket, connectors, and configured agent runtimes
+// are ready. It lets embedded callers such as `pantalk local` avoid racing the
+// first client connection against server startup.
+func (s *Server) Ready() <-chan struct{} {
+	return s.ready
+}
+
+// RunContext runs the daemon until ctx is canceled. Run remains the
+// signal-aware entry point for pantalkd; embedded modes provide their own
+// lifecycle through this method.
+func (s *Server) RunContext(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("server context is required")
+	}
+
 	s.rootCtx = ctx
 	s.startedAt = time.Now()
 
@@ -443,8 +475,10 @@ func (s *Server) Run() error {
 	if err := s.startConnectors(s.cfg); err != nil {
 		return err
 	}
+	defer s.stopAgentRuntime()
 
 	log.Printf("pantalkd ready (%d bot(s) configured)", len(s.cfg.Bots))
+	s.readyOnce.Do(func() { close(s.ready) })
 
 	go func() {
 		<-ctx.Done()
@@ -508,23 +542,98 @@ func (s *Server) startConnectors(cfg config.Config) error {
 	runtimeCtx, runtimeCancel := context.WithCancel(s.rootCtx)
 
 	// Build agent runners from config.
-	var runners []*agent.Runner
+	var runners []agent.Runtime
 	for _, acfg := range cfg.Agents {
-		r, err := agent.NewRunner(agent.Config{
-			Name:     acfg.Name,
-			When:     acfg.When,
-			Command:  agent.Command(acfg.Command),
-			Workdir:  acfg.Workdir,
-			Buffer:   acfg.Buffer,
-			Timeout:  acfg.Timeout,
-			Cooldown: acfg.Cooldown,
-		})
-		if err != nil {
-			runtimeCancel()
-			return fmt.Errorf("create agent %q: %w", acfg.Name, err)
+		driver := strings.TrimSpace(acfg.Driver)
+		if driver == "" {
+			driver = "command"
 		}
-		runners = append(runners, r)
-		log.Printf("agent %s registered", acfg.Name)
+
+		var runtime agent.Runtime
+		switch driver {
+		case "command":
+			r, err := agent.NewRunner(agent.Config{
+				Name:     acfg.Name,
+				Bots:     acfg.Bots,
+				When:     acfg.When,
+				Command:  agent.Command(acfg.Command),
+				Workdir:  acfg.Workdir,
+				Buffer:   acfg.Buffer,
+				Timeout:  acfg.Timeout,
+				Cooldown: acfg.Cooldown,
+			})
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("create agent %q: %w", acfg.Name, err)
+			}
+			runtime = r
+		case "codex":
+			client, err := s.startCodexClient(runtimeCtx, codex.Config{
+				Binary: acfg.Codex.Binary,
+			})
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("start codex agent %q: %w", acfg.Name, err)
+			}
+
+			r, err := agent.NewCodexRuntime(runtimeCtx, agent.CodexRuntimeConfig{
+				Name:         acfg.Name,
+				Bots:         acfg.Bots,
+				When:         acfg.When,
+				Workdir:      acfg.Workdir,
+				Instructions: acfg.Instructions,
+				Timeout:      time.Duration(acfg.Timeout) * time.Second,
+				Model:        acfg.Codex.Model,
+				Effort:       acfg.Codex.Effort,
+				Sandbox:      acfg.Codex.Sandbox,
+				Approval:     acfg.Codex.ApprovalPolicy,
+			}, client, s.notifications, s.deliverAgentReply)
+			if err != nil {
+				_ = client.Close()
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("create codex agent %q: %w", acfg.Name, err)
+			}
+			runtime = r
+		case "claude":
+			client, err := s.startClaudeClient(claude.Config{
+				Binary:          acfg.Claude.Binary,
+				Workdir:         acfg.Workdir,
+				Model:           acfg.Claude.Model,
+				Effort:          acfg.Claude.Effort,
+				PermissionMode:  acfg.Claude.PermissionMode,
+				Instructions:    acfg.Instructions,
+				AllowedTools:    acfg.Claude.AllowedTools,
+				DisallowedTools: acfg.Claude.DisallowedTools,
+			})
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("start claude agent %q: %w", acfg.Name, err)
+			}
+
+			r, err := agent.NewClaudeRuntime(runtimeCtx, agent.ClaudeRuntimeConfig{
+				Name:    acfg.Name,
+				Bots:    acfg.Bots,
+				When:    acfg.When,
+				Timeout: time.Duration(acfg.Timeout) * time.Second,
+			}, client, s.notifications, s.deliverAgentReply)
+			if err != nil {
+				_ = client.Close()
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("create claude agent %q: %w", acfg.Name, err)
+			}
+			runtime = r
+		default:
+			stopRuntimes(runners)
+			runtimeCancel()
+			return fmt.Errorf("create agent %q: unsupported driver %q", acfg.Name, driver)
+		}
+		runners = append(runners, runtime)
+		log.Printf("agent %s registered (driver=%s)", acfg.Name, driver)
 	}
 
 	s.mu.Lock()
@@ -575,6 +684,48 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		log.Printf("clock ticker started (1-minute interval)")
 	}
 
+	return nil
+}
+
+func stopRuntimes(runtimes []agent.Runtime) {
+	for _, runtime := range runtimes {
+		runtime.Stop()
+	}
+}
+
+func (s *Server) stopAgentRuntime() {
+	s.mu.Lock()
+	cancel := s.runtimeCancel
+	runtimes := s.agents
+	tickStop := s.tickStop
+	s.runtimeCancel = nil
+	s.agents = nil
+	s.tickStop = nil
+	s.mu.Unlock()
+
+	if tickStop != nil {
+		close(tickStop)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	stopRuntimes(runtimes)
+}
+
+func (s *Server) deliverAgentReply(ctx context.Context, event protocol.Event, text string) error {
+	response := s.handleRequest(ctx, protocol.Request{
+		Action:  protocol.ActionSend,
+		Service: event.Service,
+		Bot:     event.Bot,
+		Target:  event.Target,
+		Channel: event.Channel,
+		Thread:  event.Thread,
+		Text:    text,
+		Format:  "markdown",
+	})
+	if !response.OK {
+		return errors.New(response.Error)
+	}
 	return nil
 }
 
@@ -744,6 +895,50 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 			return protocol.Response{OK: false, Error: err.Error()}
 		}
 		return protocol.Response{OK: true, Events: events}
+	case protocol.ActionInject:
+		if strings.TrimSpace(req.Text) == "" {
+			return protocol.Response{OK: false, Error: "text is required"}
+		}
+		if strings.TrimSpace(req.User) == "" && !req.Self {
+			return protocol.Response{OK: false, Error: "user is required (or set self)"}
+		}
+		if strings.TrimSpace(req.Target) == "" && strings.TrimSpace(req.Channel) == "" && strings.TrimSpace(req.Thread) == "" {
+			return protocol.Response{OK: false, Error: "at least one of target, channel, or thread is required"}
+		}
+
+		resolvedService, resolvedBot, err := s.resolveBotService(req.Service, req.Bot)
+		if err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+
+		key := botKey(resolvedService, resolvedBot)
+		s.mu.RLock()
+		connector, ok := s.connectors[key]
+		s.mu.RUnlock()
+		if !ok {
+			return protocol.Response{OK: false, Error: fmt.Sprintf("unknown bot %q for service %q", resolvedBot, resolvedService)}
+		}
+
+		injector, ok := connector.(upstream.InboundInjector)
+		if !ok {
+			return protocol.Response{OK: false, Error: fmt.Sprintf("bot %q (%s) does not accept local message injection", resolvedBot, resolvedService)}
+		}
+
+		event, err := injector.Inject(ctx, req)
+		if err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+		event.Self = connector.Identity() != "" && event.User == connector.Identity()
+		s.mu.RLock()
+		botRef := s.bots[key]
+		s.mu.RUnlock()
+		botRef.BotID = connector.Identity()
+		event.Mentions = mentionsAgent(event, botRef)
+		event.Direct = isDirectToAgent(event)
+		event.Notify = event.Direction == "in" && !event.Self &&
+			(event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
+
+		return protocol.Response{OK: true, Ack: "injected inbound message", Event: &event}
 	case protocol.ActionSend:
 		if strings.TrimSpace(req.Text) == "" && len(req.Attach) == 0 {
 			return protocol.Response{OK: false, Error: "text is required (or attach files)"}
@@ -1012,7 +1207,7 @@ func (s *Server) publish(event protocol.Event) {
 	event.Self = botRef.BotID != "" && event.User == botRef.BotID
 	event.Mentions = mentionsAgent(event, botRef)
 	event.Direct = isDirectToAgent(event)
-	event.Notify = event.Direction == "in" && (event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
+	event.Notify = event.Direction == "in" && !event.Self && (event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
 
 	if event.Kind == "status" {
 		log.Printf("[%s] %s", key, event.Text)

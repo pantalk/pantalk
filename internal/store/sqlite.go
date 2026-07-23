@@ -123,12 +123,64 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications(service, bot, id);
 CREATE INDEX IF NOT EXISTS idx_notifications_seen ON notifications(service, bot, seen, id);
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+	agent TEXT NOT NULL,
+	conversation_key TEXT NOT NULL,
+	thread_id TEXT NOT NULL,
+	updated_at_utc TEXT NOT NULL,
+	PRIMARY KEY (agent, conversation_key)
+);
 `)
 	if err != nil {
 		return fmt.Errorf("init sqlite schema: %w", err)
 	}
 
 	return s.migrateSchema()
+}
+
+// AgentSession returns the persisted opaque runtime session for an agent
+// conversation. The boolean is false before that conversation has started.
+func (s *Store) AgentSession(agent string, conversationKey string) (string, bool, error) {
+	var sessionID string
+	err := s.db.QueryRow(
+		`SELECT thread_id FROM agent_sessions WHERE agent = ? AND conversation_key = ?`,
+		agent,
+		conversationKey,
+	).Scan(&sessionID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read agent session: %w", err)
+	}
+
+	return sessionID, true, nil
+}
+
+// SaveAgentSession creates or replaces the persisted runtime session for an
+// agent conversation. The historical thread_id column remains unchanged for
+// database compatibility.
+func (s *Store) SaveAgentSession(agent string, conversationKey string, sessionID string) error {
+	agent = strings.TrimSpace(agent)
+	conversationKey = strings.TrimSpace(conversationKey)
+	sessionID = strings.TrimSpace(sessionID)
+	if agent == "" || conversationKey == "" || sessionID == "" {
+		return fmt.Errorf("agent, conversation key, and session id are required")
+	}
+
+	_, err := s.db.Exec(`
+INSERT INTO agent_sessions (agent, conversation_key, thread_id, updated_at_utc)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(agent, conversation_key) DO UPDATE SET
+	thread_id = excluded.thread_id,
+	updated_at_utc = excluded.updated_at_utc
+`, agent, conversationKey, sessionID, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("save agent session: %w", err)
+	}
+
+	return nil
 }
 
 // migrateSchema applies additive column migrations to databases created by

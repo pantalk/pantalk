@@ -7,6 +7,7 @@ const (
 	ActionBots         = "bots"
 	ActionStatus       = "status"
 	ActionSend         = "send"
+	ActionInject       = "inject"
 	ActionReact        = "react"
 	ActionTyping       = "typing"
 	ActionHistory      = "history"
@@ -21,6 +22,10 @@ type Request struct {
 	Action  string `json:"action"`
 	Service string `json:"service,omitempty"`
 	Bot     string `json:"bot,omitempty"`
+	User    string `json:"user,omitempty"`
+	// Self makes a local injection originate from the local bot identity.
+	// It is ignored by connectors that do not support inbound injection.
+	Self    bool   `json:"self,omitempty"`
 	Target  string `json:"target,omitempty"`
 	Channel string `json:"channel,omitempty"`
 	Thread  string `json:"thread,omitempty"`

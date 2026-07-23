@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +19,7 @@ import (
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/ctl"
 	"github.com/pantalk/pantalk/internal/protocol"
+	"github.com/pantalk/pantalk/internal/server"
 	"github.com/pantalk/pantalk/internal/skill"
 )
 
@@ -65,6 +68,12 @@ func Run(service string, toolName string, args []string) int {
 		return runStatus(service, commandArgs)
 	case "send":
 		return runSend(service, commandArgs)
+	case "inject":
+		return runInject(service, commandArgs)
+	case "chat":
+		return runChat(service, commandArgs)
+	case "local":
+		return runLocal(commandArgs)
 	case "typing":
 		return runTyping(service, args[1:])
 	case "react":
@@ -99,10 +108,534 @@ func Run(service string, toolName string, args []string) int {
 	}
 }
 
+const (
+	localBotName = "local-test"
+)
+
+type localOptions struct {
+	workdir        string
+	user           string
+	driver         string
+	statePath      string
+	socketPath     string
+	codexBinary    string
+	claudeBinary   string
+	model          string
+	effort         string
+	sandbox        string
+	approval       string
+	permissionMode string
+	instructions   string
+	timeout        int
+	ephemeral      bool
+	debug          bool
+	stateExplicit  bool
+	socketExplicit bool
+}
+
+type embeddedLocalServer interface {
+	Ready() <-chan struct{}
+	RunContext(context.Context) error
+}
+
+type localDependencies struct {
+	newServer func(config.Config, bool) embeddedLocalServer
+	runChat   func(string, string) int
+}
+
+func defaultLocalDependencies() localDependencies {
+	return localDependencies{
+		newServer: func(cfg config.Config, debug bool) embeddedLocalServer {
+			srv := server.New(cfg, "", "", "")
+			srv.SetDebug(debug)
+			return srv
+		},
+		runChat: func(socketPath string, user string) int {
+			return runChat("local", []string{
+				"--socket", socketPath,
+				"--bot", localBotName,
+				"--user", user,
+			})
+		},
+	}
+}
+
+func defaultLocalStatePath() string {
+	return filepath.Join(filepath.Dir(config.DefaultDBPath()), "local.db")
+}
+
+func defaultLocalSocketPath() string {
+	socketPath := config.DefaultSocketPath()
+	extension := filepath.Ext(socketPath)
+	name := strings.TrimSuffix(filepath.Base(socketPath), extension)
+	return filepath.Join(filepath.Dir(socketPath), name+"-local"+extension)
+}
+
+func runLocal(args []string) int {
+	flags := flag.NewFlagSet("local", flag.ContinueOnError)
+	workdir := flags.String("workdir", ".", "working directory presented to the agent")
+	user := flags.String("user", "local-user", "local chat user id")
+	driver := flags.String("driver", "codex", "conversational agent driver (codex or claude)")
+	statePath := flags.String("state", defaultLocalStatePath(), "SQLite state path")
+	socketPath := flags.String("socket", defaultLocalSocketPath(), "Unix socket path")
+	codexBinary := flags.String("codex-binary", "", "Codex executable (default: codex on PATH)")
+	claudeBinary := flags.String("claude-binary", "", "Claude Code executable (default: claude on PATH)")
+	model := flags.String("model", "", "agent model override (default: inherit local config)")
+	effort := flags.String("effort", "", "agent effort override")
+	sandbox := flags.String("sandbox", "read-only", "Codex sandbox: read-only, workspace-write, or danger-full-access")
+	approval := flags.String("approval-policy", "never", "Codex approval policy: untrusted, on-request, or never")
+	permissionMode := flags.String("permission-mode", "plan", "Claude permission mode: plan, dontAsk, acceptEdits, auto, manual, or bypassPermissions")
+	instructions := flags.String("instructions", "", "agent instructions")
+	timeout := flags.Int("timeout", 900, "maximum seconds per agent turn")
+	ephemeral := flags.Bool("ephemeral", false, "discard socket, database, and sessions on exit")
+	debug := flags.Bool("debug", false, "enable verbose Pantalk server logging")
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+
+	visited := make(map[string]bool)
+	flags.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	options := localOptions{
+		workdir:        *workdir,
+		user:           *user,
+		driver:         *driver,
+		statePath:      *statePath,
+		socketPath:     *socketPath,
+		codexBinary:    *codexBinary,
+		claudeBinary:   *claudeBinary,
+		model:          *model,
+		effort:         *effort,
+		sandbox:        *sandbox,
+		approval:       *approval,
+		permissionMode: *permissionMode,
+		instructions:   *instructions,
+		timeout:        *timeout,
+		ephemeral:      *ephemeral,
+		debug:          *debug,
+		stateExplicit:  visited["state"],
+		socketExplicit: visited["socket"],
+	}
+
+	if err := runLocalMode(options, defaultLocalDependencies()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func runLocalMode(options localOptions, dependencies localDependencies) error {
+	options.driver = strings.TrimSpace(options.driver)
+	if options.driver != "codex" && options.driver != "claude" {
+		return fmt.Errorf("unsupported --driver %q (use codex or claude)", options.driver)
+	}
+	options.user = strings.TrimSpace(options.user)
+	if options.user == "" {
+		return errors.New("--user cannot be empty")
+	}
+	if options.timeout <= 0 {
+		return errors.New("--timeout must be greater than zero")
+	}
+	if options.driver == "codex" {
+		switch options.sandbox {
+		case "read-only", "workspace-write", "danger-full-access":
+		default:
+			return fmt.Errorf("unsupported --sandbox %q", options.sandbox)
+		}
+		switch options.approval {
+		case "untrusted", "on-request", "never":
+		default:
+			return fmt.Errorf("unsupported --approval-policy %q", options.approval)
+		}
+	} else {
+		switch options.permissionMode {
+		case "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan":
+		default:
+			return fmt.Errorf("unsupported --permission-mode %q", options.permissionMode)
+		}
+	}
+	if options.ephemeral && (options.stateExplicit || options.socketExplicit) {
+		return errors.New("--ephemeral cannot be combined with --state or --socket")
+	}
+
+	workdir, err := filepath.Abs(strings.TrimSpace(options.workdir))
+	if err != nil {
+		return fmt.Errorf("resolve workdir: %w", err)
+	}
+	info, err := os.Stat(workdir)
+	if err != nil {
+		return fmt.Errorf("workdir: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workdir %q is not a directory", workdir)
+	}
+
+	var ephemeralDir string
+	if options.ephemeral {
+		ephemeralDir, err = os.MkdirTemp("", "pantalk-local-")
+		if err != nil {
+			return fmt.Errorf("create ephemeral state directory: %w", err)
+		}
+		defer os.RemoveAll(ephemeralDir)
+		options.statePath = filepath.Join(ephemeralDir, "pantalk.db")
+		options.socketPath = filepath.Join(ephemeralDir, "pantalk.sock")
+	}
+
+	options.statePath = strings.TrimSpace(options.statePath)
+	options.socketPath = strings.TrimSpace(options.socketPath)
+	if options.statePath == "" || options.socketPath == "" {
+		return errors.New("--state and --socket cannot be empty")
+	}
+	if err := config.EnsureDir(options.socketPath); err != nil {
+		return fmt.Errorf("prepare local socket directory: %w", err)
+	}
+
+	if connection, dialErr := net.DialTimeout("unix", options.socketPath, 150*time.Millisecond); dialErr == nil {
+		_ = connection.Close()
+		return fmt.Errorf("another Pantalk local session is already listening on %s", options.socketPath)
+	}
+
+	instructions := strings.TrimSpace(options.instructions)
+	if instructions == "" {
+		instructions = "You are participating in a local Pantalk test conversation. Answer the user directly and concisely. Do not modify files unless explicitly requested."
+	}
+
+	agentConfig := config.AgentConfig{
+		Name:         "local-" + options.driver,
+		Driver:       options.driver,
+		Bots:         []string{localBotName},
+		When:         "notify",
+		Workdir:      workdir,
+		Instructions: instructions,
+		Timeout:      options.timeout,
+	}
+	if options.driver == "codex" {
+		agentConfig.Codex = config.CodexAgentConfig{
+			Binary:         strings.TrimSpace(options.codexBinary),
+			Model:          strings.TrimSpace(options.model),
+			Effort:         strings.TrimSpace(options.effort),
+			Sandbox:        options.sandbox,
+			ApprovalPolicy: options.approval,
+		}
+	} else {
+		agentConfig.Claude = config.ClaudeAgentConfig{
+			Binary:         strings.TrimSpace(options.claudeBinary),
+			Model:          strings.TrimSpace(options.model),
+			Effort:         strings.TrimSpace(options.effort),
+			PermissionMode: options.permissionMode,
+		}
+	}
+
+	cfg := config.Config{
+		Server: config.ServerConfig{
+			SocketPath:  options.socketPath,
+			DBPath:      options.statePath,
+			HistorySize: 500,
+			Media: config.MediaConfig{
+				Backend: config.MediaBackendNone,
+			},
+		},
+		Bots: []config.BotConfig{{
+			Name:        localBotName,
+			Type:        "local",
+			DisplayName: "Pantalk Local",
+		}},
+		Agents: []config.AgentConfig{agentConfig},
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	localServer := dependencies.newServer(cfg, options.debug)
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- localServer.RunContext(ctx)
+	}()
+
+	select {
+	case <-localServer.Ready():
+	case err := <-serverDone:
+		if err == nil {
+			return errors.New("Pantalk local server stopped before becoming ready")
+		}
+		return fmt.Errorf("start Pantalk local server: %w", err)
+	case <-ctx.Done():
+		<-serverDone
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Pantalk local mode ready\n")
+	fmt.Fprintf(os.Stderr, "  agent:   %s\n", options.driver)
+	fmt.Fprintf(os.Stderr, "  workdir: %s\n", workdir)
+	if options.driver == "codex" {
+		fmt.Fprintf(os.Stderr, "  sandbox: %s\n", options.sandbox)
+	} else {
+		fmt.Fprintf(os.Stderr, "  permissions: %s\n", options.permissionMode)
+	}
+	if options.ephemeral {
+		fmt.Fprintln(os.Stderr, "  state:   ephemeral")
+	} else {
+		fmt.Fprintf(os.Stderr, "  state:   %s\n", options.statePath)
+	}
+
+	chatDone := make(chan int, 1)
+	go func() {
+		chatDone <- dependencies.runChat(options.socketPath, options.user)
+	}()
+
+	var chatCode int
+	select {
+	case chatCode = <-chatDone:
+		cancel()
+	case err := <-serverDone:
+		cancel()
+		if err != nil {
+			return fmt.Errorf("Pantalk local server stopped: %w", err)
+		}
+		return errors.New("Pantalk local server stopped unexpectedly")
+	case <-ctx.Done():
+		chatCode = 0
+	}
+
+	serverErr := <-serverDone
+	if serverErr != nil {
+		return fmt.Errorf("stop Pantalk local server: %w", serverErr)
+	}
+	if chatCode != 0 {
+		return fmt.Errorf("local chat exited with status %d", chatCode)
+	}
+	return nil
+}
+
+// runInject sends one synthetic inbound message to a local connector. The
+// daemon rejects this action for every network-backed connector.
+func runInject(service string, args []string) int {
+	flags := flag.NewFlagSet("inject", flag.ContinueOnError)
+	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "service name (normally local; auto-resolved from bot if omitted)")
+	bot := flags.String("bot", "", "local bot name from config")
+	user := flags.String("user", "", "inbound sender id")
+	self := flags.Bool("self", false, "inject as the local bot identity (tests loop prevention)")
+	target := flags.String("target", "", "generic destination id")
+	channel := flags.String("channel", "", "channel id")
+	thread := flags.String("thread", "", "thread id")
+	message := flags.String("text", "", "message text (use - to read from stdin)")
+	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	if strings.TrimSpace(*bot) == "" {
+		fmt.Fprintln(os.Stderr, "--bot is required")
+		return 2
+	}
+	if strings.TrimSpace(*user) == "" && !*self {
+		fmt.Fprintln(os.Stderr, "--user is required (or use --self)")
+		return 2
+	}
+
+	text := *message
+	if text == "-" || (text == "" && !isStdinTTY()) {
+		stdinText, err := readStdin()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		text = stdinText
+	}
+	if strings.TrimSpace(text) == "" {
+		fmt.Fprintln(os.Stderr, "--text is required (or pass message via stdin)")
+		return 2
+	}
+
+	// A missing destination means a direct conversation with this sender.
+	if strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
+		sender := strings.TrimSpace(*user)
+		if *self {
+			sender = "local:" + strings.TrimSpace(*bot)
+		}
+		*target = "user:" + sender
+	}
+
+	resp, err := call(*socket, protocol.Request{
+		Action:  protocol.ActionInject,
+		Service: resolveService(service, *svcFlag),
+		Bot:     strings.TrimSpace(*bot),
+		User:    strings.TrimSpace(*user),
+		Self:    *self,
+		Target:  strings.TrimSpace(*target),
+		Channel: strings.TrimSpace(*channel),
+		Thread:  strings.TrimSpace(*thread),
+		Text:    text,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if !resp.OK {
+		fmt.Fprintln(os.Stderr, resp.Error)
+		return 1
+	}
+
+	if resp.Event != nil {
+		if *jsonOut {
+			_ = json.NewEncoder(os.Stdout).Encode(resp.Event)
+		} else {
+			printEvent(*resp.Event)
+		}
+	}
+
+	return 0
+}
+
+// runChat provides a small terminal client over the local connector. It opens
+// the subscription before accepting input so an immediate agent reply cannot
+// race past the client.
+func runChat(service string, args []string) int {
+	flags := flag.NewFlagSet("chat", flag.ContinueOnError)
+	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "service name (normally local; auto-resolved from bot if omitted)")
+	bot := flags.String("bot", "", "local bot name from config")
+	user := flags.String("user", "local-user", "inbound sender id")
+	target := flags.String("target", "", "generic destination id")
+	channel := flags.String("channel", "", "channel id")
+	thread := flags.String("thread", "", "thread id")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	*bot = strings.TrimSpace(*bot)
+	*user = strings.TrimSpace(*user)
+	if *bot == "" {
+		fmt.Fprintln(os.Stderr, "--bot is required")
+		return 2
+	}
+	if *user == "" {
+		fmt.Fprintln(os.Stderr, "--user cannot be empty")
+		return 2
+	}
+	if strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
+		*target = "user:" + *user
+	}
+
+	svc := resolveService(service, *svcFlag)
+	stream, err := net.Dial("unix", *socket)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "connect socket: %v\n", err)
+		return 1
+	}
+	defer stream.Close()
+
+	subscribe := protocol.Request{
+		Action:  protocol.ActionSubscribe,
+		Service: svc,
+		Bot:     *bot,
+		Target:  strings.TrimSpace(*target),
+		Channel: strings.TrimSpace(*channel),
+		Thread:  strings.TrimSpace(*thread),
+	}
+	if err := json.NewEncoder(stream).Encode(subscribe); err != nil {
+		fmt.Fprintf(os.Stderr, "subscribe: %v\n", err)
+		return 1
+	}
+
+	decoder := json.NewDecoder(stream)
+	var ready protocol.Response
+	if err := decoder.Decode(&ready); err != nil {
+		fmt.Fprintf(os.Stderr, "subscribe: %v\n", err)
+		return 1
+	}
+	if !ready.OK {
+		fmt.Fprintln(os.Stderr, ready.Error)
+		return 1
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			var response protocol.Response
+			if err := decoder.Decode(&response); err != nil {
+				return
+			}
+			if !response.OK || response.Event == nil {
+				continue
+			}
+			event := response.Event
+			if event.Kind == "message" && event.Direction == "out" {
+				fmt.Printf("\n%s> %s\n", *bot, event.Text)
+				if isStdinTTY() {
+					fmt.Printf("%s> ", *user)
+				}
+			}
+		}
+	}()
+
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(interrupt)
+	go func() {
+		select {
+		case <-interrupt:
+			_ = stream.Close()
+		case <-done:
+		}
+	}()
+
+	if isStdinTTY() {
+		fmt.Fprintln(os.Stdout, "Local chat ready. Type /quit to exit.")
+		fmt.Printf("%s> ", *user)
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			if isStdinTTY() {
+				fmt.Printf("%s> ", *user)
+			}
+			continue
+		}
+		if text == "/quit" || text == "/exit" {
+			break
+		}
+
+		resp, callErr := call(*socket, protocol.Request{
+			Action:  protocol.ActionInject,
+			Service: svc,
+			Bot:     *bot,
+			User:    *user,
+			Target:  strings.TrimSpace(*target),
+			Channel: strings.TrimSpace(*channel),
+			Thread:  strings.TrimSpace(*thread),
+			Text:    text,
+		})
+		if callErr != nil {
+			fmt.Fprintln(os.Stderr, callErr)
+			return 1
+		}
+		if !resp.OK {
+			fmt.Fprintln(os.Stderr, resp.Error)
+			return 1
+		}
+		if isStdinTTY() {
+			fmt.Printf("%s> ", *user)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "read input: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
 func runBots(service string, args []string) int {
 	flags := flag.NewFlagSet("bots", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
+	svcFlag := flags.String("service", "", "filter by service")
 	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -388,7 +921,7 @@ func runTyping(service string, args []string) int {
 func runHistory(service string, args []string, forceNotify bool) int {
 	flags := flag.NewFlagSet("history", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
+	svcFlag := flags.String("service", "", "filter by service")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
@@ -449,7 +982,7 @@ func runHistory(service string, args []string, forceNotify bool) int {
 func runSubscribe(service string, args []string) int {
 	flags := flag.NewFlagSet("stream", flag.ContinueOnError)
 	socket := flags.String("socket", defaultSocketPath, "unix socket path")
-	svcFlag := flags.String("service", "", "filter by service (slack, discord, mattermost, telegram, whatsapp)")
+	svcFlag := flags.String("service", "", "filter by service")
 	bot := flags.String("bot", "", "bot name from config")
 	target := flags.String("target", "", "filter by destination id")
 	channel := flags.String("channel", "", "filter by channel id")
@@ -727,9 +1260,12 @@ func printUsage(toolName string) {
 	fmt.Fprintf(os.Stderr, `%s - unified CLI for pantalk
 
 Messaging:
+  %s local [--driver codex|claude] [--workdir PATH] [--ephemeral]
   %s bots%s [--json]
   %s status [--json]
-	%s send --bot NAME (--text MESSAGE | --text - | --attach PATH) (--target ID | --channel ID | --thread ID) [--attach PATH]... [--format plain|markdown|html]%s [--json]
+  %s send --bot NAME (--text MESSAGE | --text - | --attach PATH) (--target ID | --channel ID | --thread ID) [--attach PATH]... [--format plain|markdown|html]%s [--json]
+  %s inject --bot NAME --user ID --text MESSAGE [--target ID | --channel ID | --thread ID]%s [--json]
+  %s chat --bot NAME [--user ID] [--target ID | --channel ID | --thread ID]%s
   %s react --bot NAME --emoji EMOJI (--channel ID | --thread ID | --target ID)%s
   %s typing --bot NAME (--channel ID | --thread ID | --target ID) [--stop]%s
   %s history [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--limit N] [--since ID] [--clear [--all]]%s [--json]
@@ -755,8 +1291,11 @@ Admin:
 
 JSON output is enabled by default when stdout is not a terminal.
 `, toolName,
+		toolName,
 		toolName, svcHint,
 		toolName,
+		toolName, svcHint,
+		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,

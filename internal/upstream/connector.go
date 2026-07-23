@@ -45,6 +45,8 @@ func NewConnector(bot config.BotConfig, publish func(protocol.Event), attachment
 	}
 
 	switch bot.Type {
+	case "local":
+		return NewLocalConnector(bot.Name, publish), nil
 	case "slack":
 		return NewSlackConnector(bot, publish)
 	case "discord":

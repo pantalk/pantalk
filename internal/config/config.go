@@ -77,17 +77,45 @@ type BotConfig struct {
 	Channels      []string `yaml:"channels"`
 }
 
-// AgentConfig describes a preconfigured command that pantalkd can launch when
-// matching notifications arrive. Commands are exec'd directly (no shell) so
-// only explicitly listed programs can run unless --allow-exec is set.
+// AgentConfig describes either a command launched for matching notifications
+// or a persistent native agent connection. Bots select the messaging
+// connections an agent may consume; leaving it empty retains the legacy
+// command-runner behavior of matching every bot.
 type AgentConfig struct {
-	Name     string        `yaml:"name"`
-	When     string        `yaml:"when"`     // expr expression evaluated against each event (default: "notify")
-	Command  agent.Command `yaml:"command"`  // string or []string - exec'd directly, never via shell
-	Workdir  string        `yaml:"workdir"`  // working directory (optional)
-	Buffer   int           `yaml:"buffer"`   // seconds to batch events before launching (default 30)
-	Timeout  int           `yaml:"timeout"`  // max runtime in seconds (default 120)
-	Cooldown int           `yaml:"cooldown"` // min seconds between consecutive runs (default 60)
+	Name         string            `yaml:"name"`
+	Driver       string            `yaml:"driver"`       // command (default for legacy configs), codex, or claude
+	Bots         []string          `yaml:"bots"`         // configured bot names this agent handles
+	When         string            `yaml:"when"`         // expr expression evaluated against each event (default: "notify")
+	Command      agent.Command     `yaml:"command"`      // command driver only; exec'd directly, never via shell
+	Workdir      string            `yaml:"workdir"`      // working directory (optional)
+	Instructions string            `yaml:"instructions"` // persistent-agent developer instructions
+	Buffer       int               `yaml:"buffer"`       // command driver: batch window in seconds (default 30)
+	Timeout      int               `yaml:"timeout"`      // max command/turn runtime in seconds
+	Cooldown     int               `yaml:"cooldown"`     // command driver: min seconds between runs (default 60)
+	Codex        CodexAgentConfig  `yaml:"codex"`        // codex driver overrides; omitted values inherit local Codex config
+	Claude       ClaudeAgentConfig `yaml:"claude"`       // claude driver overrides; omitted values inherit local Claude Code config
+}
+
+// CodexAgentConfig contains optional native app-server overrides. Authentication
+// and all omitted settings are inherited from the user's local Codex install.
+type CodexAgentConfig struct {
+	Binary         string `yaml:"binary"`
+	Model          string `yaml:"model"`
+	Effort         string `yaml:"effort"`
+	Sandbox        string `yaml:"sandbox"`
+	ApprovalPolicy string `yaml:"approval_policy"`
+}
+
+// ClaudeAgentConfig contains optional Claude Code CLI overrides.
+// Authentication and all omitted settings are inherited from the user's local
+// Claude Code installation.
+type ClaudeAgentConfig struct {
+	Binary          string   `yaml:"binary"`
+	Model           string   `yaml:"model"`
+	Effort          string   `yaml:"effort"`
+	PermissionMode  string   `yaml:"permission_mode"`
+	AllowedTools    []string `yaml:"allowed_tools"`
+	DisallowedTools []string `yaml:"disallowed_tools"`
 }
 
 func ResolveCredential(value string) (string, error) {
@@ -212,6 +240,9 @@ func validate(cfg Config, allowExec bool) error {
 		seenBots[bot.Name] = struct{}{}
 
 		switch bot.Type {
+		case "local":
+			// Offline connector for local development and deterministic tests.
+			// It receives inbound messages only through the daemon socket.
 		case "slack":
 			if strings.TrimSpace(bot.BotToken) == "" {
 				return fmt.Errorf("bot %q requires bot_token", bot.Name)
@@ -295,14 +326,71 @@ func validate(cfg Config, allowExec bool) error {
 		}
 		seenAgents[a.Name] = struct{}{}
 
-		if len(a.Command) == 0 {
-			return fmt.Errorf("agent %q requires command", a.Name)
+		seenAgentBots := map[string]struct{}{}
+		for _, botName := range a.Bots {
+			botName = strings.TrimSpace(botName)
+			if botName == "" {
+				return fmt.Errorf("agent %q contains an empty bot name", a.Name)
+			}
+			if _, exists := seenBots[botName]; !exists {
+				return fmt.Errorf("agent %q references unknown bot %q", a.Name, botName)
+			}
+			if _, exists := seenAgentBots[botName]; exists {
+				return fmt.Errorf("agent %q references bot %q more than once", a.Name, botName)
+			}
+			seenAgentBots[botName] = struct{}{}
 		}
 
-		// Restrict command binaries to the known allowlist unless --allow-exec.
-		binary := filepath.Base(a.Command[0])
-		if !allowExec && !agent.AllowedCommands[binary] {
-			return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+		driver := strings.TrimSpace(a.Driver)
+		if driver == "" && len(a.Command) > 0 {
+			driver = "command"
+		}
+
+		switch driver {
+		case "command":
+			if len(a.Command) == 0 {
+				return fmt.Errorf("agent %q requires command", a.Name)
+			}
+
+			// Restrict command binaries to the known allowlist unless
+			// --allow-exec. Commands are executed directly, never by a shell.
+			binary := filepath.Base(a.Command[0])
+			if !allowExec && !agent.AllowedCommands[binary] {
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+			}
+		case "codex":
+			if len(a.Command) > 0 {
+				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
+			}
+			if len(a.Bots) == 0 {
+				return fmt.Errorf("agent %q: codex driver requires at least one bot", a.Name)
+			}
+			switch a.Codex.Sandbox {
+			case "", "read-only", "workspace-write", "danger-full-access":
+			default:
+				return fmt.Errorf("agent %q: unsupported codex sandbox %q", a.Name, a.Codex.Sandbox)
+			}
+			switch a.Codex.ApprovalPolicy {
+			case "", "untrusted", "on-request", "never":
+			default:
+				return fmt.Errorf("agent %q: unsupported codex approval_policy %q", a.Name, a.Codex.ApprovalPolicy)
+			}
+		case "claude":
+			if len(a.Command) > 0 {
+				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
+			}
+			if len(a.Bots) == 0 {
+				return fmt.Errorf("agent %q: claude driver requires at least one bot", a.Name)
+			}
+			switch a.Claude.PermissionMode {
+			case "", "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan":
+			default:
+				return fmt.Errorf("agent %q: unsupported claude permission_mode %q", a.Name, a.Claude.PermissionMode)
+			}
+		case "":
+			return fmt.Errorf("agent %q requires driver or command", a.Name)
+		default:
+			return fmt.Errorf("agent %q: unsupported driver %q (use command, codex, or claude)", a.Name, driver)
 		}
 	}
 
