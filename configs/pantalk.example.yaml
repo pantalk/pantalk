@@ -3,6 +3,16 @@ server:
   # db_path: defaults to ~/.local/share/pantalk/pantalk.db
   notification_history_size: 1000
 
+  # Attachment storage (all fields optional):
+  # media:
+  #   backend: fs          # "fs" (default) stores files locally; "none" records
+  #                        # attachment metadata without downloading any bytes
+  #   path: ~/.local/share/pantalk/media   # storage root (fs backend)
+  #   max_bytes: 20971520  # per-file cap, default 20 MiB
+  #   attach_roots:        # directories `send --attach` may read files from;
+  #     - ~/exports        # outbound attachments are DISABLED until this is
+  #     - /var/lib/reports # set (allowlist-by-default, like agent commands)
+
 # ---
 
 bots:

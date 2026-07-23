@@ -178,9 +178,14 @@ pantalk bots
 # Send a message (service is auto-resolved from bot name)
 pantalk send --bot my-bot --channel C0123456789 --text "hello from cli"
 pantalk send --bot my-bot --channel C0123456789 --thread 1711234567.000100 --text "reply in thread"
+pantalk send --bot my-bot --channel C0123456789 --text "see attached" --attach ./report.pdf --attach ./chart.png
+# (requires the file's directory to be listed in server.media.attach_roots)
 
 # Read history
 pantalk history --bot my-bot --channel C0123456789 --limit 20
+
+# Show "typing..." while the agent thinks (auto-stops when you send)
+pantalk typing --bot my-bot --channel C0123456789
 
 # Check & clear notifications
 pantalk notifications --bot my-bot --unseen --limit 50
@@ -269,6 +274,7 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 ```json
 {"action": "bots"}
 {"action": "send", "bot": "my-bot", "channel": "C0123", "text": "hello"}
+{"action": "send", "bot": "my-bot", "channel": "C0123", "text": "see attached", "attach": ["/abs/path/report.pdf"]}
 {"action": "history", "bot": "my-bot", "channel": "C0123", "limit": 20}
 {"action": "history", "bot": "my-bot", "search": "deploy", "limit": 50}
 {"action": "notifications", "bot": "my-bot", "unseen": true}
@@ -292,6 +298,12 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 ### Persistence
 
 All events are persisted locally in **SQLite**. `history` always reads from local state.
+
+Attachment bytes live outside the database in a content-addressed media store (default `~/.local/share/pantalk/media`, configurable via `server.media`). Events record a durable storage key; local paths are derived from it at read time, so moving the storage root never strands history. Files no longer referenced by any event or notification are garbage-collected on startup and after `--clear`. Attachment support is currently implemented for **Telegram** (send + receive); other connectors refuse `--attach` rather than dropping files silently.
+
+Outbound attachments are allowlist-gated: `send --attach` only reads files under the directories listed in `server.media.attach_roots`, and is disabled entirely when the list is empty - the same allowlist-by-default posture as agent commands. Symlinks are resolved before the check, and the list can be changed with a live `reload`.
+
+A message that arrives with files but no text is stored with empty text; `history` and `notifications` queries render a synthetic placeholder (`[attachment: photo.jpg]`) so agents and list output can see something arrived. The placeholder is derived at query time and never persisted.
 
 ### Server Capabilities
 
@@ -368,9 +380,19 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ---
 
+## Comparisons
+
+| Compared to                        | Guide                                          | In short                                                                                                                     |
+| ---------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both give agents a unified, addressable event stream. Buzz consolidates your team into one workspace; Pantalk federates the platforms they already use. |
+
+---
+
 ## Roadmap
 
 - Richer provider event support (edits, reactions, thread metadata)
+- Typing indicators for the remaining connectors (Slack, Discord, Mattermost, Matrix, WhatsApp, Zulip, iMessage - Telegram shipped)
+- Inbound attachment support for the remaining connectors (Telegram shipped)
 - Provider-specific message normalization
 - Additional platform connectors
 

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/pantalk/pantalk/internal/agent"
 	"github.com/pantalk/pantalk/internal/config"
+	"github.com/pantalk/pantalk/internal/media"
 	"github.com/pantalk/pantalk/internal/protocol"
 	"github.com/pantalk/pantalk/internal/store"
 	"github.com/pantalk/pantalk/internal/upstream"
@@ -43,8 +45,14 @@ type Server struct {
 	routesByBot   map[string]map[string]struct{}
 	connectors    map[string]upstream.Connector
 	notifications *store.Store
+	attachments   media.Store
 	agents        []*agent.Runner
 	tickStop      chan struct{} // closed to stop the clock ticker
+	typing        map[string]*typingLease
+
+	// Typing lease timing overrides; zero means the package defaults.
+	typingPulse time.Duration
+	typingTTL   time.Duration
 }
 
 func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride string) *Server {
@@ -57,6 +65,325 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 		subsByBot:      make(map[string]map[chan protocol.Event]struct{}),
 		routesByBot:    make(map[string]map[string]struct{}),
 		connectors:     make(map[string]upstream.Connector),
+	}
+}
+
+// openMediaStore builds the attachment store described by the config. The
+// "none" backend yields a store that records attachment metadata without
+// fetching bytes, so disabling media never disables messaging.
+func openMediaStore(cfg config.MediaConfig) (media.Store, error) {
+	if cfg.Backend == config.MediaBackendNone {
+		log.Printf("attachment storage disabled (server.media.backend: none)")
+		return media.NoopStore{}, nil
+	}
+
+	fsStore, err := media.NewFSStore(cfg.Path, cfg.MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("storing attachments at %s (max %d bytes)", fsStore.Root(), cfg.MaxBytes)
+
+	return fsStore, nil
+}
+
+// orphanGracePeriod is how long an unreferenced attachment is kept before it
+// becomes eligible for collection. Bytes land in the media store before the
+// event row that references them is written, so a sweep with no grace period
+// could delete an attachment that is still being delivered.
+const orphanGracePeriod = time.Hour
+
+// collectOrphanedAttachments deletes stored attachments that no event or
+// notification refers to any more. It is best-effort maintenance: a failure is
+// logged and never propagated, since reclaiming disk is not worth failing a
+// startup or a clear over.
+func (s *Server) collectOrphanedAttachments(reason string) {
+	if s.notifications == nil || s.attachments == nil {
+		return
+	}
+
+	collector, ok := s.attachments.(media.Collector)
+	if !ok {
+		return
+	}
+
+	referenced, err := s.notifications.ReferencedAttachmentKeys()
+	if err != nil {
+		log.Printf("attachment gc (%s) skipped: %v", reason, err)
+		return
+	}
+
+	result, err := collector.Collect(referenced, time.Now().Add(-orphanGracePeriod))
+	if err != nil {
+		log.Printf("attachment gc (%s) failed: %v", reason, err)
+		return
+	}
+
+	if result.Deleted > 0 {
+		log.Printf("attachment gc (%s): removed %d orphaned file(s), reclaimed %d bytes", reason, result.Deleted, result.Bytes)
+	} else if s.debug {
+		log.Printf("debug: attachment gc (%s): scanned %d, retained %d, removed 0", reason, result.Scanned, result.Retained)
+	}
+}
+
+// mediaStoreConfigChanged reports whether the fields that shape the media
+// store itself differ. AttachRoots is intentionally not compared - it is
+// request-time policy, not store construction.
+func mediaStoreConfigChanged(old config.MediaConfig, new config.MediaConfig) bool {
+	return old.Backend != new.Backend ||
+		old.Path != new.Path ||
+		old.MaxBytes != new.MaxBytes
+}
+
+// validateAttachPaths enforces the server.media.attach_roots allowlist against
+// every path in a send request. It is the daemon-side security boundary: the
+// CLI also validates for friendlier errors, but any process with socket access
+// can submit a raw request, so the check that matters lives here.
+//
+// Symlinks are resolved on both sides before comparison, otherwise a link
+// inside an allowed root pointing at ~/.ssh would defeat the allowlist. This
+// is check-then-open, so a file swapped for a symlink between this check and
+// the connector's os.Open is not caught - the threat model here is a
+// misbehaving or prompt-injected agent, not an attacker who can already race
+// the local filesystem.
+func validateAttachPaths(roots []string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	if len(roots) == 0 {
+		return errors.New("outbound attachments are disabled: set server.media.attach_roots to the directories files may be attached from")
+	}
+
+	resolvedRoots := make([]string, 0, len(roots))
+	for _, root := range roots {
+		expanded := expandHomePath(root)
+
+		absolute, err := filepath.Abs(expanded)
+		if err != nil {
+			continue
+		}
+
+		// A root that does not exist cannot admit anything; skip it rather
+		// than failing every send over one stale config entry.
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			continue
+		}
+
+		resolvedRoots = append(resolvedRoots, resolved)
+	}
+
+	if len(resolvedRoots) == 0 {
+		return errors.New("no usable directory in server.media.attach_roots (do the configured paths exist?)")
+	}
+
+	for _, raw := range paths {
+		absolute, err := filepath.Abs(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("attachment %q: %w", raw, err)
+		}
+
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return fmt.Errorf("attachment %q: %w", raw, err)
+		}
+
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return fmt.Errorf("attachment %q: %w", raw, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("attachment %q is a directory", raw)
+		}
+
+		allowed := false
+		for _, root := range resolvedRoots {
+			if resolved == root || strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("attachment %q is outside the configured attach_roots", raw)
+		}
+	}
+
+	return nil
+}
+
+// expandHomePath resolves a leading ~/ against the daemon's home directory so
+// attach_roots entries can be written portably in YAML.
+func expandHomePath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	return path
+}
+
+// Typing lease timing defaults. The pulse cadence mirrors the platform
+// integrations this design is borrowed from (queue.js pulses every 4s against
+// Telegram's ~5s status decay). The TTL bounds a lease whose owner died
+// without sending - each new typing request for the same destination renews
+// it. Instances carry overrides so tests can shrink the timing without racing
+// on shared globals.
+const (
+	defaultTypingPulseInterval = 4 * time.Second
+	defaultTypingLeaseTTL      = 60 * time.Second
+)
+
+func (s *Server) typingPulseEvery() time.Duration {
+	if s.typingPulse > 0 {
+		return s.typingPulse
+	}
+	return defaultTypingPulseInterval
+}
+
+func (s *Server) typingLeaseWindow() time.Duration {
+	if s.typingTTL > 0 {
+		return s.typingTTL
+	}
+	return defaultTypingLeaseTTL
+}
+
+// typingLease keeps a "bot is typing..." indicator alive for one destination.
+// The daemon owns the cadence because lease holders are external agent
+// processes that cannot be relied on to re-pulse mid-generation: one request
+// means "keep typing until I send, I stop, or the TTL expires".
+type typingLease struct {
+	stop    chan struct{}
+	refresh chan struct{}
+	once    sync.Once
+}
+
+func (l *typingLease) end() {
+	l.once.Do(func() { close(l.stop) })
+}
+
+// typingKey scopes a lease to one bot and one destination, using the same
+// destination precedence the connectors use to resolve where a send goes.
+func typingKey(botKey string, req protocol.Request) string {
+	destination := strings.TrimSpace(req.Channel)
+	if destination == "" {
+		destination = strings.TrimSpace(req.Target)
+	}
+	if destination == "" {
+		destination = strings.TrimSpace(req.Thread)
+	}
+	return botKey + "\x00" + destination
+}
+
+// startTypingLease starts a lease for the request's destination, or renews the
+// existing one. The first pulse happens synchronously so the caller learns
+// about an unreachable platform immediately rather than from a log line.
+func (s *Server) startTypingLease(botKey string, req protocol.Request) error {
+	key := typingKey(botKey, req)
+
+	s.mu.Lock()
+	if s.typing == nil {
+		s.typing = make(map[string]*typingLease)
+	}
+	if lease, ok := s.typing[key]; ok {
+		s.mu.Unlock()
+		// Renew rather than stack: the TTL extends, the cadence continues.
+		select {
+		case lease.refresh <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	lease := &typingLease{
+		stop:    make(chan struct{}),
+		refresh: make(chan struct{}, 1),
+	}
+	s.typing[key] = lease
+	s.mu.Unlock()
+
+	if err := s.pulseTyping(botKey, req); err != nil {
+		s.removeTypingLease(key, lease)
+		return err
+	}
+
+	go s.runTypingLease(key, botKey, req, lease)
+
+	return nil
+}
+
+func (s *Server) runTypingLease(key string, botKey string, req protocol.Request, lease *typingLease) {
+	defer s.removeTypingLease(key, lease)
+
+	ticker := time.NewTicker(s.typingPulseEvery())
+	defer ticker.Stop()
+
+	deadline := time.Now().Add(s.typingLeaseWindow())
+
+	for {
+		select {
+		case <-lease.stop:
+			return
+		case <-lease.refresh:
+			deadline = time.Now().Add(s.typingLeaseWindow())
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return
+			}
+			// A pulse failure ends the lease: repeating a call that just
+			// failed every four seconds only fills the log.
+			if err := s.pulseTyping(botKey, req); err != nil {
+				if s.debug {
+					log.Printf("debug: typing lease %q ended: %v", key, err)
+				}
+				return
+			}
+		}
+	}
+}
+
+// pulseTyping resolves the connector at call time - not capture time - so a
+// lease survives config reloads and dies cleanly when its bot is removed.
+func (s *Server) pulseTyping(botKey string, req protocol.Request) error {
+	s.mu.RLock()
+	connector := s.connectors[botKey]
+	s.mu.RUnlock()
+
+	if connector == nil {
+		return fmt.Errorf("bot for %q is no longer configured", botKey)
+	}
+
+	indicator, ok := connector.(upstream.TypingIndicator)
+	if !ok {
+		return fmt.Errorf("connector for %q does not support typing indicators", botKey)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return indicator.Typing(ctx, req)
+}
+
+func (s *Server) removeTypingLease(key string, lease *typingLease) {
+	lease.end()
+
+	s.mu.Lock()
+	if current, ok := s.typing[key]; ok && current == lease {
+		delete(s.typing, key)
+	}
+	s.mu.Unlock()
+}
+
+// stopTypingLease ends the lease for one destination, if any.
+func (s *Server) stopTypingLease(botKey string, req protocol.Request) {
+	key := typingKey(botKey, req)
+
+	s.mu.Lock()
+	lease, ok := s.typing[key]
+	s.mu.Unlock()
+
+	if ok {
+		lease.end()
 	}
 }
 
@@ -84,6 +411,16 @@ func (s *Server) Run() error {
 	}
 	defer notificationStore.Close()
 	s.notifications = notificationStore
+
+	attachmentStore, err := openMediaStore(s.cfg.Server.Media)
+	if err != nil {
+		return fmt.Errorf("open media store: %w", err)
+	}
+	s.attachments = attachmentStore
+
+	// Catch anything stranded by an unclean shutdown or an out-of-band edit to
+	// the database.
+	s.collectOrphanedAttachments("startup")
 
 	if err := os.RemoveAll(s.cfg.Server.SocketPath); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
@@ -158,7 +495,7 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			event.Service = bot.Type
 			event.Bot = bot.Name
 			s.publish(event)
-		})
+		}, s.attachments)
 		if err != nil {
 			return fmt.Errorf("create connector for %s: %w", key, err)
 		}
@@ -408,8 +745,8 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 		}
 		return protocol.Response{OK: true, Events: events}
 	case protocol.ActionSend:
-		if strings.TrimSpace(req.Text) == "" {
-			return protocol.Response{OK: false, Error: "text is required"}
+		if strings.TrimSpace(req.Text) == "" && len(req.Attach) == 0 {
+			return protocol.Response{OK: false, Error: "text is required (or attach files)"}
 		}
 		if strings.TrimSpace(req.Target) == "" && strings.TrimSpace(req.Channel) == "" && strings.TrimSpace(req.Thread) == "" {
 			return protocol.Response{OK: false, Error: "at least one of target, channel, or thread is required"}
@@ -444,6 +781,24 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 			return protocol.Response{OK: false, Error: fmt.Sprintf("unknown bot %q for service %q", resolvedBot, resolvedService)}
 		}
 
+		// Refuse attachments the connector cannot deliver. Without this gate a
+		// connector that ignores req.Attach would send the caption and drop
+		// the files while reporting success.
+		if len(req.Attach) > 0 {
+			sender, supports := connector.(upstream.AttachmentSender)
+			if !supports || !sender.SupportsAttachments() {
+				return protocol.Response{OK: false, Error: fmt.Sprintf("bot %q (%s) does not support attachments yet", resolvedBot, resolvedService)}
+			}
+
+			s.mu.RLock()
+			attachRoots := s.cfg.Server.Media.AttachRoots
+			s.mu.RUnlock()
+
+			if err := validateAttachPaths(attachRoots, req.Attach); err != nil {
+				return protocol.Response{OK: false, Error: err.Error()}
+			}
+		}
+
 		s.markParticipation(key, req.Target, req.Channel, req.Thread)
 
 		event, err := connector.Send(ctx, req)
@@ -451,10 +806,46 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 			return protocol.Response{OK: false, Error: err.Error()}
 		}
 
+		// The reply is out - the "typing..." indicator for this destination
+		// has served its purpose.
+		s.stopTypingLease(key, req)
+
 		// Annotate self flag on the send response (publish callback works on a copy).
 		event.Self = connector.Identity() != "" && event.User == connector.Identity()
 
 		return protocol.Response{OK: true, Ack: fmt.Sprintf("sent event %d", event.ID), Event: &event}
+	case protocol.ActionTyping:
+		if strings.TrimSpace(req.Target) == "" && strings.TrimSpace(req.Channel) == "" && strings.TrimSpace(req.Thread) == "" {
+			return protocol.Response{OK: false, Error: "at least one of target, channel, or thread is required"}
+		}
+
+		resolvedService, resolvedBot, err := s.resolveBotService(req.Service, req.Bot)
+		if err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+
+		key := botKey(resolvedService, resolvedBot)
+		s.mu.RLock()
+		connector, ok := s.connectors[key]
+		s.mu.RUnlock()
+		if !ok {
+			return protocol.Response{OK: false, Error: fmt.Sprintf("unknown bot %q for service %q", resolvedBot, resolvedService)}
+		}
+
+		if _, supported := connector.(upstream.TypingIndicator); !supported {
+			return protocol.Response{OK: false, Error: fmt.Sprintf("bot %q (%s) does not support typing indicators yet", resolvedBot, resolvedService)}
+		}
+
+		if req.Stop {
+			s.stopTypingLease(key, req)
+			return protocol.Response{OK: true, Ack: "typing stopped"}
+		}
+
+		if err := s.startTypingLease(key, req); err != nil {
+			return protocol.Response{OK: false, Error: err.Error()}
+		}
+
+		return protocol.Response{OK: true, Ack: fmt.Sprintf("typing until send or %s timeout", s.typingLeaseWindow())}
 	case protocol.ActionReact:
 		emoji := strings.TrimSpace(req.Emoji)
 		if emoji == "" {
@@ -599,6 +990,7 @@ func (s *Server) readEvents(service string, bot string, limit int, sinceID int64
 	}
 
 	s.annotateSelf(events)
+	s.hydrateAttachments(events)
 	return events, nil
 }
 
@@ -702,6 +1094,7 @@ func (s *Server) reloadConfig() error {
 	s.mu.RLock()
 	currentSocket := s.cfg.Server.SocketPath
 	currentDB := s.cfg.Server.DBPath
+	currentMedia := s.cfg.Server.Media
 	s.mu.RUnlock()
 
 	if cfg.Server.SocketPath != currentSocket {
@@ -709,6 +1102,14 @@ func (s *Server) reloadConfig() error {
 	}
 	if cfg.Server.DBPath != currentDB {
 		return fmt.Errorf("reload cannot change db_path at runtime (current=%q new=%q), restart daemon", currentDB, cfg.Server.DBPath)
+	}
+	// The media store is built once at startup and captured by every
+	// connector, so the store-shaping fields cannot change on reload.
+	// AttachRoots is deliberately exempt: it is pure per-request policy read
+	// from the live config, so tightening or widening it is exactly what a
+	// reload is for.
+	if mediaStoreConfigChanged(currentMedia, cfg.Server.Media) {
+		return fmt.Errorf("reload cannot change server.media backend/path/max_bytes at runtime (current=%+v new=%+v), restart daemon", currentMedia, cfg.Server.Media)
 	}
 
 	log.Printf("reloading configuration from %s", s.cfgPath)
@@ -940,6 +1341,59 @@ func (s *Server) annotateSelf(events []protocol.Event) {
 	}
 }
 
+// hydrateAttachments prepares attachment-bearing events for query responses.
+//
+// Two derived views are produced, neither of which is ever persisted:
+//
+//   - Path is resolved from the durable storage key against the media store
+//     configured right now, rather than read back from the database, so
+//     moving the storage root does not strand history.
+//   - An event whose text is empty but which carries attachments gets a
+//     synthetic placeholder ("[attachment: photo.jpg]") so list output and
+//     text-matching consumers see that something arrived. This runs at query
+//     time only; the stored row and the live stream keep the empty text.
+func (s *Server) hydrateAttachments(events []protocol.Event) {
+	for i := range events {
+		for j := range events[i].Attachments {
+			attachment := &events[i].Attachments[j]
+
+			attachment.Path = ""
+			if attachment.Key == "" || s.attachments == nil {
+				continue
+			}
+
+			if path, ok := s.attachments.LocalPath(attachment.Key); ok {
+				attachment.Path = path
+			} else if s.debug {
+				log.Printf("debug: attachment key=%q has no local path", attachment.Key)
+			}
+		}
+
+		if strings.TrimSpace(events[i].Text) == "" && len(events[i].Attachments) > 0 {
+			events[i].Text = attachmentPlaceholder(events[i].Attachments)
+		}
+	}
+}
+
+// attachmentPlaceholder renders a synthetic text stand-in for a message that
+// arrived with files but no words, e.g. "[attachment: photo.jpg]". The name
+// degrades to the MIME type, then to "file", so the placeholder never comes
+// out empty.
+func attachmentPlaceholder(attachments []protocol.Attachment) string {
+	parts := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		label := attachment.Name
+		if label == "" {
+			label = attachment.MIME
+		}
+		if label == "" {
+			label = "file"
+		}
+		parts = append(parts, "[attachment: "+label+"]")
+	}
+	return strings.Join(parts, " ")
+}
+
 func (s *Server) listNotifications(req protocol.Request) ([]protocol.Event, error) {
 	if s.notifications == nil {
 		return nil, errors.New("notification store is not available")
@@ -965,6 +1419,7 @@ func (s *Server) listNotifications(req protocol.Request) ([]protocol.Event, erro
 	}
 
 	s.annotateSelf(events)
+	s.hydrateAttachments(events)
 	return events, nil
 }
 
@@ -981,7 +1436,7 @@ func (s *Server) clearNotifications(req protocol.Request) (int64, error) {
 		return 0, errors.New("refusing broad clear without --all (or specific filters)")
 	}
 
-	return s.notifications.DeleteNotifications(store.NotificationFilter{
+	cleared, err := s.notifications.DeleteNotifications(store.NotificationFilter{
 		Service: req.Service,
 		Bot:     req.Bot,
 		Target:  req.Target,
@@ -990,6 +1445,15 @@ func (s *Server) clearNotifications(req protocol.Request) (int64, error) {
 		Search:  req.Search,
 		Unseen:  req.Unseen,
 	}, req.All)
+	if err != nil {
+		return cleared, err
+	}
+
+	if cleared > 0 {
+		s.collectOrphanedAttachments("clear notifications")
+	}
+
+	return cleared, nil
 }
 
 func (s *Server) clearHistory(req protocol.Request) (int64, error) {
@@ -1005,7 +1469,7 @@ func (s *Server) clearHistory(req protocol.Request) (int64, error) {
 		return 0, errors.New("refusing broad clear without --all (or specific filters)")
 	}
 
-	return s.notifications.DeleteEvents(store.EventFilter{
+	cleared, err := s.notifications.DeleteEvents(store.EventFilter{
 		Service: req.Service,
 		Bot:     req.Bot,
 		Target:  req.Target,
@@ -1013,4 +1477,13 @@ func (s *Server) clearHistory(req protocol.Request) (int64, error) {
 		Thread:  req.Thread,
 		Search:  req.Search,
 	}, req.All)
+	if err != nil {
+		return cleared, err
+	}
+
+	if cleared > 0 {
+		s.collectOrphanedAttachments("clear history")
+	}
+
+	return cleared, nil
 }

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/formatting"
@@ -109,7 +109,7 @@ func (c *IMessageConnector) Run(ctx context.Context) {
 		default:
 		}
 
-		db, err := sql.Open("sqlite3", c.dbPath+"?mode=ro&_journal_mode=WAL")
+		db, err := sql.Open("sqlite", "file:"+c.dbPath+"?mode=ro")
 		if err != nil {
 			log.Printf("[imessage:%s] cannot open database: %v", c.botName, err)
 			c.publishStatus("imessage database open failed: " + err.Error())

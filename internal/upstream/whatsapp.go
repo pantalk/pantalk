@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"google.golang.org/protobuf/proto"
 
@@ -57,8 +57,8 @@ func NewWhatsAppConnector(bot config.BotConfig, publish func(protocol.Event)) (*
 	}
 
 	logger := waLog.Stdout("WhatsApp", "ERROR", true)
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", dbPath)
-	container, err := sqlstore.New(context.Background(), "sqlite3", dsn, logger)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", dbPath)
+	container, err := sqlstore.New(context.Background(), "sqlite", dsn, logger)
 	if err != nil {
 		return nil, fmt.Errorf("open whatsapp store for bot %q: %w", bot.Name, err)
 	}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -64,6 +65,8 @@ func Run(service string, toolName string, args []string) int {
 		return runStatus(service, commandArgs)
 	case "send":
 		return runSend(service, commandArgs)
+	case "typing":
+		return runTyping(service, args[1:])
 	case "react":
 		return runReact(service, commandArgs)
 	case "history":
@@ -206,6 +209,8 @@ func runSend(service string, args []string) int {
 	thread := flags.String("thread", "", "thread id")
 	text := flags.String("text", "", "message text (use - to read from stdin)")
 	format := flags.String("format", "plain", "message format (plain, markdown, html)")
+	var attach stringList
+	flags.Var(&attach, "attach", "local file path to upload (repeat for multiple files)")
 	jsonOut := flags.Bool("json", !isTTY(), "output as JSON (default when stdout is not a terminal)")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -219,9 +224,12 @@ func runSend(service string, args []string) int {
 	}
 
 	// Resolve message text: explicit flag, stdin sentinel (-), or implicit
-	// stdin when the flag is omitted and stdin is not a terminal.
+	// stdin when the flag is omitted and stdin is not a terminal. With
+	// attachments present, stdin is left alone unless explicitly requested -
+	// `pantalk send --attach file.png` in a pipeline should not block waiting
+	// for a caption that is never coming.
 	messageText := *text
-	if messageText == "-" || (messageText == "" && !isStdinTTY()) {
+	if messageText == "-" || (messageText == "" && len(attach) == 0 && !isStdinTTY()) {
 		stdinText, err := readStdin()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -230,12 +238,20 @@ func runSend(service string, args []string) int {
 		messageText = stdinText
 	}
 
-	if strings.TrimSpace(messageText) == "" {
-		fmt.Fprintln(os.Stderr, "--text is required (or pass message via stdin)")
+	if strings.TrimSpace(messageText) == "" && len(attach) == 0 {
+		fmt.Fprintln(os.Stderr, "--text is required (or pass message via stdin, or use --attach)")
 		return 2
 	}
 	if strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
 		fmt.Fprintln(os.Stderr, "one of --target, --channel, or --thread is required")
+		return 2
+	}
+
+	// The daemon opens these paths in its own working directory, so resolve
+	// them here while the user's cwd is still the right frame of reference.
+	attachPaths, err := resolveAttachments(attach)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 
@@ -248,6 +264,7 @@ func runSend(service string, args []string) int {
 		Thread:  *thread,
 		Text:    messageText,
 		Format:  *format,
+		Attach:  attachPaths,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -302,6 +319,57 @@ func runReact(service string, args []string) int {
 		Thread:  *thread,
 		Target:  *target,
 		Emoji:   *emoji,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	if !resp.OK {
+		fmt.Fprintln(os.Stderr, resp.Error)
+		return 1
+	}
+
+	fmt.Println(resp.Ack)
+	return 0
+}
+
+// runTyping starts (or stops) a daemon-managed typing lease. One call keeps
+// the "bot is typing..." indicator alive until a send to the same destination,
+// an explicit --stop, or the daemon-side timeout - the agent does not need to
+// re-pulse while it thinks.
+func runTyping(service string, args []string) int {
+	flags := flag.NewFlagSet("typing", flag.ContinueOnError)
+	socket := flags.String("socket", defaultSocketPath, "unix socket path")
+	svcFlag := flags.String("service", "", "service name (auto-resolved from bot if omitted)")
+	bot := flags.String("bot", "", "bot name from config")
+	channel := flags.String("channel", "", "channel destination id")
+	thread := flags.String("thread", "", "thread id")
+	target := flags.String("target", "", "generic destination id")
+	stop := flags.Bool("stop", false, "stop the typing indicator instead of starting it")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	svc := resolveService(service, *svcFlag)
+
+	if strings.TrimSpace(*bot) == "" {
+		fmt.Fprintln(os.Stderr, "--bot is required")
+		return 2
+	}
+	if strings.TrimSpace(*target) == "" && strings.TrimSpace(*channel) == "" && strings.TrimSpace(*thread) == "" {
+		fmt.Fprintln(os.Stderr, "one of --target, --channel, or --thread is required")
+		return 2
+	}
+
+	resp, err := call(*socket, protocol.Request{
+		Action:  protocol.ActionTyping,
+		Service: svc,
+		Bot:     *bot,
+		Channel: *channel,
+		Thread:  *thread,
+		Target:  *target,
+		Stop:    *stop,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -550,6 +618,56 @@ func call(socket string, request protocol.Request) (protocol.Response, error) {
 	return resp, nil
 }
 
+// stringList collects a repeatable string flag, so --attach can be passed more
+// than once in a single send.
+type stringList []string
+
+func (s *stringList) String() string {
+	if s == nil {
+		return ""
+	}
+	return strings.Join(*s, ",")
+}
+
+func (s *stringList) Set(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("value cannot be empty")
+	}
+	*s = append(*s, trimmed)
+	return nil
+}
+
+// resolveAttachments converts attachment paths to absolute form and checks that
+// each one is a readable regular file. Failing here gives the user an error
+// naming the path they typed, rather than a daemon-side error about a path they
+// never wrote.
+func resolveAttachments(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	resolved := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		absolute, err := filepath.Abs(raw)
+		if err != nil {
+			return nil, fmt.Errorf("resolve attachment %q: %w", raw, err)
+		}
+
+		info, err := os.Stat(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("attachment %q: %w", raw, err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("attachment %q is a directory", raw)
+		}
+
+		resolved = append(resolved, absolute)
+	}
+
+	return resolved, nil
+}
+
 func printEvent(event protocol.Event) {
 	fmt.Printf("%d\tnid=%d\tseen=%t\t%s\t%s/%s\t%s\t%s\tuser=%s self=%t\tnotify=%t direct=%t mention=%t\ttarget=%s channel=%s thread=%s\t%s\n",
 		event.ID,
@@ -570,6 +688,17 @@ func printEvent(event protocol.Event) {
 		event.Thread,
 		event.Text,
 	)
+
+	// Attachments print on their own indented lines so the tab-delimited event
+	// line above stays parseable by cut/awk.
+	for _, attachment := range event.Attachments {
+		fmt.Printf("\tattachment\tname=%s\tmime=%s\tsize=%d\tpath=%s\n",
+			attachment.Name,
+			attachment.MIME,
+			attachment.Size,
+			attachment.Path,
+		)
+	}
 }
 
 func toAction(notifications bool) string {
@@ -600,8 +729,9 @@ func printUsage(toolName string) {
 Messaging:
   %s bots%s [--json]
   %s status [--json]
-	%s send --bot NAME (--text MESSAGE | --text -) (--target ID | --channel ID | --thread ID) [--format plain|markdown|html]%s [--json]
+	%s send --bot NAME (--text MESSAGE | --text - | --attach PATH) (--target ID | --channel ID | --thread ID) [--attach PATH]... [--format plain|markdown|html]%s [--json]
   %s react --bot NAME --emoji EMOJI (--channel ID | --thread ID | --target ID)%s
+  %s typing --bot NAME (--channel ID | --thread ID | --target ID) [--stop]%s
   %s history [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--limit N] [--since ID] [--clear [--all]]%s [--json]
   %s notifications [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--unseen] [--limit N] [--since ID] [--clear [--all]]%s [--json]
   %s stream [--bot NAME] [--channel ID] [--thread ID] [--search TEXT] [--notify] [--timeout N]%s [--json]
@@ -627,6 +757,7 @@ JSON output is enabled by default when stdout is not a terminal.
 `, toolName,
 		toolName, svcHint,
 		toolName,
+		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,
 		toolName, svcHint,

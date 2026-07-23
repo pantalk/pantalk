@@ -112,6 +112,34 @@ You should see your Telegram bot listed. Send a test message:
 pantalk send --bot my-telegram-bot --channel -1001234567890 --text "Hello from Pantalk!"
 ```
 
+## Attachments
+
+Telegram is currently the connector with full attachment support, in both directions.
+
+**Inbound** - photos, documents, audio, video, voice notes, video notes, animations, and stickers are downloaded into the local media store (default `~/.local/share/pantalk/media`, configurable via `server.media`) and recorded on the event with a local `path`. Photos arrive as multiple pre-scaled sizes; the largest is kept. Files over `max_bytes` (default 20 MiB, matching the Bot API download limit) are recorded as metadata without bytes.
+
+**Outbound** - attach local files with `--attach`:
+
+```bash
+pantalk send --bot my-telegram-bot --channel -1001234567890 --text "Latency graph" --attach ./latency.png
+```
+
+JPEG/PNG/WebP go out via `sendPhoto` (rendered inline, re-encoded by Telegram); everything else via `sendDocument` (byte-exact). The text becomes the caption of the first file.
+
+Uploads are pre-checked against the Bot API limits before any bytes are streamed: images over the 10 MiB `sendPhoto` limit are automatically delivered via `sendDocument` instead (byte-exact, not inline), files over the 50 MiB upload limit are refused with an error naming the limit, and captions over 1024 characters (counted in UTF-16 units, as Telegram does) are refused before the upload starts.
+
+> **Important:** outbound attachments require `server.media.attach_roots` in your config - the daemon only reads files under those directories and refuses everything else. See `configs/pantalk.example.yaml`.
+
+## Typing Indicator
+
+Telegram supports the `pantalk typing` command via `sendChatAction`. One call keeps the "bot is typing..." status alive - the daemon re-pulses every 4 seconds (the status decays after ~5) until the bot sends a message to that chat, `--stop` is passed, or a 60-second timeout expires:
+
+```bash
+pantalk typing --bot my-telegram-bot --channel -1001234567890
+# ... agent thinks ...
+pantalk send --bot my-telegram-bot --channel -1001234567890 --text "Answer"   # indicator stops
+```
+
 ## Troubleshooting
 
 | Symptom                          | Cause                                                                        |

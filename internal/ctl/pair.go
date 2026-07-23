@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal/v3"
+	_ "modernc.org/sqlite"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -69,8 +69,8 @@ func runPair(args []string) error {
 	defer cancel()
 
 	logger := waLog.Stdout("WhatsApp", "ERROR", true)
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", dbPath)
-	container, err := sqlstore.New(ctx, "sqlite3", dsn, logger)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", dbPath)
+	container, err := sqlstore.New(ctx, "sqlite", dsn, logger)
 	if err != nil {
 		return fmt.Errorf("open whatsapp store: %w", err)
 	}

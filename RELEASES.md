@@ -4,44 +4,25 @@ This document describes how to build, version, and release pantalk binaries.
 
 ## Overview
 
-Pantalk uses **Git tags** to trigger automated releases. When a tag matching
-`v*` is pushed to the `pantalk/pantalk` repository, a GitHub Actions workflow
-builds multi-platform binaries and publishes them as a GitHub Release.
+Releases are driven by the **`VERSION` file**. Bumping it on `main` starts an
+automated pipeline that tags the exact commit tested by CI and publishes
+multi-platform binaries as a GitHub Release:
 
-## Version Embedding
+1. Edit `VERSION` and add its matching section to `CHANGELOG.md`.
+2. Merge the change to `main`.
+3. CI runs the race-enabled tests and the static release-mode tests.
+4. After CI succeeds, `tag-release.yaml` creates an annotated `v*` tag and
+   dispatches `release.yaml` at that tag.
+5. The release workflow validates, rebuilds, packages, checksums, and publishes
+   the binaries with notes from `CHANGELOG.md`.
 
-Every binary embeds a version string at build time via Go linker flags. The
-version variable lives in `internal/version/version.go` and defaults to `"dev"`
-when no flag is set (e.g. when running with `go run`).
+Existing tags and releases are not changed by this process.
 
-When the version is `"dev"`, update checks are skipped entirely.
+## Version embedding
 
-## How to Release
-
-### 1. Ensure the repository is up to date
-
-Make sure all changes have been pushed to the `pantalk/pantalk` repository on
-GitHub before tagging a release.
-
-### 2. Tag the release
-
-Create and push a semver tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Use semantic versioning: `vMAJOR.MINOR.PATCH`.
-
-### 3. Wait for CI
-
-The [release workflow](.github/workflows/release.yaml) runs automatically and:
-
-1. Builds all binaries (`pantalk`, `pantalkd`) for each platform.
-2. Packages them into `.tar.gz` archives.
-3. Generates SHA-256 checksums.
-4. Creates a GitHub Release with auto-generated release notes.
+Every binary embeds the release tag via Go linker flags. The variable lives in
+`internal/version/version.go` and defaults to `"dev"` when no flag is set.
+Update checks are skipped for those development builds.
 
 ### Target Platforms
 
@@ -51,7 +32,7 @@ The [release workflow](.github/workflows/release.yaml) runs automatically and:
 | macOS   | amd64, arm64 |
 | Windows | amd64        |
 
-## Local Builds
+## Local builds
 
 A `Makefile` is provided for building locally:
 
@@ -60,7 +41,7 @@ A `Makefile` is provided for building locally:
 make
 
 # Build with an explicit version
-make VERSION=v0.1.0
+make VERSION=v0.0.5
 
 # Cross-compile for a specific platform
 make cross GOOS=darwin GOARCH=arm64
@@ -72,7 +53,7 @@ make test
 make clean
 ```
 
-## Update Notifications
+## Update notifications
 
 Release binaries automatically check for newer versions by querying the GitHub
 Releases API. This happens:
@@ -85,9 +66,11 @@ The check is **skipped entirely** when the version is `"dev"` (i.e. when
 running via `go run` or `go install` without ldflags), so it only applies to
 distributed binaries.
 
-## Versioning Guidelines
+## Versioning guidelines
 
 - Follow [Semantic Versioning](https://semver.org/).
 - Use `v` prefix on tags (`v1.0.0`, not `1.0.0`).
 - Pre-release versions: `v0.1.0-beta.1`.
+- Keep `VERSION` bare, without the `v` prefix.
+- Add a matching `CHANGELOG.md` section before merging a version bump.
 - Breaking protocol changes between client and server warrant a major bump.
