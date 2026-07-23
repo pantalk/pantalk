@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ type fakeClaudeClient struct {
 	prompts  []string
 	nextID   string
 	response string
+	runErr   error
 	closed   bool
 }
 
@@ -29,6 +32,9 @@ func (f *fakeClaudeClient) RunTurn(
 	defer f.mu.Unlock()
 	f.sessions = append(f.sessions, sessionID)
 	f.prompts = append(f.prompts, prompt)
+	if f.runErr != nil {
+		return claude.TurnResult{}, f.runErr
+	}
 	resultID := sessionID
 	if resultID == "" {
 		resultID = f.nextID
@@ -167,5 +173,48 @@ func TestClaudeRuntimeUsesPersistedSession(t *testing.T) {
 	defer client.mu.Unlock()
 	if len(client.sessions) != 1 || client.sessions[0] != "claude-existing" {
 		t.Fatalf("unexpected resumed sessions: %v", client.sessions)
+	}
+}
+
+func TestClaudeRuntimeRepliesWithSafeHintWhenTurnFails(t *testing.T) {
+	client := &fakeClaudeClient{
+		runErr: errors.New("authentication failed: secret-token"),
+	}
+	replies := make(chan string, 1)
+	runtime, err := NewClaudeRuntime(context.Background(), ClaudeRuntimeConfig{
+		Name:    "claude-engineering",
+		Timeout: time.Second,
+	}, client, &memorySessions{}, func(_ context.Context, _ protocol.Event, text string) error {
+		replies <- text
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	defer runtime.Stop()
+
+	runtime.Handle(protocol.Event{
+		Service:   "local",
+		Bot:       "local-test",
+		Kind:      "message",
+		Direction: "in",
+		User:      "alice",
+		Target:    "user:alice",
+		Direct:    true,
+		Notify:    true,
+		Text:      "hello",
+	})
+
+	select {
+	case reply := <-replies:
+		if !strings.Contains(reply, "Claude Code agent could not respond") ||
+			!strings.Contains(reply, "claude auth status") {
+			t.Fatalf("unexpected failure hint %q", reply)
+		}
+		if strings.Contains(reply, "secret-token") {
+			t.Fatalf("failure hint leaked internal error: %q", reply)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failure hint")
 	}
 }

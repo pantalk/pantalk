@@ -137,6 +137,7 @@ func (r *ClaudeRuntime) processEvent(conversationKey string, event protocol.Even
 	sessionID, err := r.sessionForConversation(conversationKey)
 	if err != nil {
 		log.Printf("[agent:%s] prepare conversation: %v", r.cfg.Name, err)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, claudeFailureReply)
 		return
 	}
 
@@ -145,15 +146,18 @@ func (r *ClaudeRuntime) processEvent(conversationKey string, event protocol.Even
 	cancel()
 	if err != nil {
 		log.Printf("[agent:%s] claude turn failed: %v", r.cfg.Name, err)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, claudeFailureReply)
 		return
 	}
 	if strings.TrimSpace(result.SessionID) == "" {
 		log.Printf("[agent:%s] claude turn completed without a session id", r.cfg.Name)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, claudeFailureReply)
 		return
 	}
 	if result.SessionID != sessionID {
 		if err := r.sessions.SaveAgentSession(r.cfg.Name, conversationKey, result.SessionID); err != nil {
 			log.Printf("[agent:%s] save Claude session %s: %v", r.cfg.Name, result.SessionID, err)
+			deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, claudeFailureReply)
 			return
 		}
 		r.mu.Lock()
@@ -164,6 +168,7 @@ func (r *ClaudeRuntime) processEvent(conversationKey string, event protocol.Even
 	text := strings.TrimSpace(result.Text)
 	if text == "" {
 		log.Printf("[agent:%s] claude session %s completed without a final response", r.cfg.Name, result.SessionID)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, claudeFailureReply)
 		return
 	}
 

@@ -41,7 +41,7 @@ A `Makefile` is provided for building locally:
 make
 
 # Build with an explicit version
-make VERSION=v0.0.7
+make VERSION=v0.0.8
 
 # Cross-compile for a specific platform
 make cross GOOS=darwin GOARCH=arm64
