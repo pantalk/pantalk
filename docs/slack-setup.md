@@ -35,8 +35,10 @@ This lets Pantalk receive events over a WebSocket connection instead of requirin
 | Scope               | Purpose                                         |
 | -------------------- | ----------------------------------------------- |
 | `chat:write`         | Send messages                                   |
+| `channels:read`      | Resolve public channel names and IDs            |
 | `channels:history`   | Receive messages in public channels             |
 | `app_mentions:read`  | Receive @mention events                         |
+| `groups:read`        | Resolve private channel names and IDs (optional) |
 | `groups:history`     | Receive messages in private channels (optional) |
 | `im:history`         | Receive direct messages (optional)              |
 
@@ -83,6 +85,11 @@ export SLACK_APP_LEVEL_TOKEN="xapp-..."   # from step 3
 Add the bot to your Pantalk config:
 
 ```yaml
+agents:
+  - name: engineering
+    driver: codex
+    workdir: /home/me/project
+
 bots:
   - name: my-slack-bot
     type: slack
@@ -90,9 +97,16 @@ bots:
     app_level_token: $SLACK_APP_LEVEL_TOKEN
     channels:
       - '#general'     # friendly name (resolved to channel ID at startup)
+    agents:
+      - agent: engineering
+        when: direct
+      - agent: engineering
+        when: 'channel == "#general"'
 ```
 
 Channels accept either friendly names (e.g. `#general`, `engineering`) or raw Slack IDs (e.g. `C0123456789`). Friendly names are resolved to IDs automatically when the daemon starts.
+Agent `channel` expressions compare against both forms while Pantalk preserves
+the raw ID for replies and persistent session identity.
 
 Token fields accept either a literal string or an environment variable reference (`$VAR` or `${VAR}`).
 

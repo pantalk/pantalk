@@ -6,31 +6,30 @@ import (
 	"github.com/pantalk/pantalk/internal/protocol"
 )
 
-func TestMatcherFiltersBotsBeforeExpression(t *testing.T) {
-	matcher, err := NewMatcher("codex", "direct || mentions", []string{"engineering"})
+func TestMatcherEvaluatesBindingExpression(t *testing.T) {
+	matcher, err := NewMatcher("codex", "direct || mentions")
 	if err != nil {
 		t.Fatalf("new matcher: %v", err)
 	}
 
 	event := protocol.Event{
 		Service:   "slack",
-		Bot:       "engineering",
 		Kind:      "message",
 		Direction: "in",
 		Direct:    true,
 	}
 	if !matcher.Matches(event) {
-		t.Fatal("expected selected bot to match")
+		t.Fatal("expected direct message to match")
 	}
 
-	event.Bot = "operations"
+	event.Direct = false
 	if matcher.Matches(event) {
-		t.Fatal("unexpected match for unselected bot")
+		t.Fatal("unexpected match for unrelated message")
 	}
 }
 
 func TestMatcherDefaultsToNotifications(t *testing.T) {
-	matcher, err := NewMatcher("codex", "", []string{"local-test"})
+	matcher, err := NewMatcher("codex", "")
 	if err != nil {
 		t.Fatalf("new matcher: %v", err)
 	}

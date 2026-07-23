@@ -141,6 +141,44 @@ func TestMatches_ChannelIn(t *testing.T) {
 	}
 }
 
+func TestMatches_ChannelAcceptsRawIDOrFriendlyName(t *testing.T) {
+	event := makeEvent(func(e *protocol.Event) {
+		e.Channel = "C0123456789"
+		e.ChannelName = "#engineering"
+	})
+
+	for _, expression := range []string{
+		`channel == "C0123456789"`,
+		`channel == "#engineering"`,
+		`channel == "engineering"`,
+		`channel in ["#general", "#engineering"]`,
+	} {
+		r, err := NewRunner(Config{
+			Name:    "test",
+			When:    expression,
+			Command: Command{"claude"},
+		})
+		if err != nil {
+			t.Fatalf("compile %q: %v", expression, err)
+		}
+		if !r.Matches(event) {
+			t.Fatalf("expected %q to match %+v", expression, event)
+		}
+	}
+
+	r, err := NewRunner(Config{
+		Name:    "test",
+		When:    `channel != "#engineering"`,
+		Command: Command{"claude"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Matches(event) {
+		t.Fatal("friendly-name inequality should reject the matching channel")
+	}
+}
+
 func TestMatches_BotFilter(t *testing.T) {
 	r, err := NewRunner(Config{
 		Name:    "test",
@@ -982,33 +1020,6 @@ func TestNeedsTick(t *testing.T) {
 				t.Errorf("NeedsTick()=%v, want %v", r.NeedsTick(), tt.expected)
 			}
 		})
-	}
-}
-
-func TestRunnerFiltersConfiguredBots(t *testing.T) {
-	runner, err := NewRunner(Config{
-		Name:    "selected-bot-only",
-		Bots:    []string{"engineering"},
-		When:    "notify",
-		Command: Command{"codex"},
-	})
-	if err != nil {
-		t.Fatalf("new runner: %v", err)
-	}
-
-	event := protocol.Event{
-		Service:   "slack",
-		Bot:       "engineering",
-		Kind:      "message",
-		Direction: "in",
-		Notify:    true,
-	}
-	if !runner.Matches(event) {
-		t.Fatal("expected configured bot to match")
-	}
-	event.Bot = "operations"
-	if runner.Matches(event) {
-		t.Fatal("unexpected match for unconfigured bot")
 	}
 }
 

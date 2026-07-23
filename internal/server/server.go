@@ -51,6 +51,9 @@ type Server struct {
 	notifications *store.Store
 	attachments   media.Store
 	agents        []agent.Runtime
+	bindingsByBot map[string][]*agentBinding
+	scheduled     []*agentBinding
+	scheduleRuns  map[string]string
 	tickStop      chan struct{} // closed to stop the clock ticker
 	typing        map[string]*typingLease
 
@@ -60,6 +63,19 @@ type Server struct {
 
 	startCodexClient  func(context.Context, codex.Config) (agent.CodexClient, error)
 	startClaudeClient func(claude.Config) (agent.ClaudeClient, error)
+}
+
+type agentBinding struct {
+	name     string
+	agent    string
+	bot      config.BotConfig
+	when     string
+	prompt   string
+	channel  string
+	target   string
+	timezone *time.Location
+	matcher  *agent.Matcher
+	runtime  agent.Runtime
 }
 
 func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride string) *Server {
@@ -72,6 +88,8 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 		subsByBot:      make(map[string]map[chan protocol.Event]struct{}),
 		routesByBot:    make(map[string]map[string]struct{}),
 		connectors:     make(map[string]upstream.Connector),
+		bindingsByBot:  make(map[string][]*agentBinding),
+		scheduleRuns:   make(map[string]string),
 		ready:          make(chan struct{}),
 		startCodexClient: func(ctx context.Context, cfg codex.Config) (agent.CodexClient, error) {
 			return codex.Start(ctx, cfg)
@@ -541,9 +559,20 @@ func (s *Server) startConnectors(cfg config.Config) error {
 
 	runtimeCtx, runtimeCancel := context.WithCancel(s.rootCtx)
 
-	// Build agent runners from config.
+	// Build one reusable runtime per top-level agent definition.
 	var runners []agent.Runtime
+	runtimesByName := make(map[string]agent.Runtime, len(cfg.Agents))
+	referencedAgents := make(map[string]struct{})
+	for _, bot := range cfg.Bots {
+		for _, binding := range bot.Agents {
+			referencedAgents[binding.Agent] = struct{}{}
+		}
+	}
 	for _, acfg := range cfg.Agents {
+		if _, referenced := referencedAgents[acfg.Name]; !referenced {
+			log.Printf("agent %s is not bound to a bot; runtime not started", acfg.Name)
+			continue
+		}
 		driver := strings.TrimSpace(acfg.Driver)
 		if driver == "" {
 			driver = "command"
@@ -554,8 +583,6 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		case "command":
 			r, err := agent.NewRunner(agent.Config{
 				Name:     acfg.Name,
-				Bots:     acfg.Bots,
-				When:     acfg.When,
 				Command:  agent.Command(acfg.Command),
 				Workdir:  acfg.Workdir,
 				Buffer:   acfg.Buffer,
@@ -580,8 +607,6 @@ func (s *Server) startConnectors(cfg config.Config) error {
 
 			r, err := agent.NewCodexRuntime(runtimeCtx, agent.CodexRuntimeConfig{
 				Name:         acfg.Name,
-				Bots:         acfg.Bots,
-				When:         acfg.When,
 				Workdir:      acfg.Workdir,
 				Instructions: acfg.Instructions,
 				Timeout:      time.Duration(acfg.Timeout) * time.Second,
@@ -616,8 +641,6 @@ func (s *Server) startConnectors(cfg config.Config) error {
 
 			r, err := agent.NewClaudeRuntime(runtimeCtx, agent.ClaudeRuntimeConfig{
 				Name:    acfg.Name,
-				Bots:    acfg.Bots,
-				When:    acfg.When,
 				Timeout: time.Duration(acfg.Timeout) * time.Second,
 			}, client, s.notifications, s.deliverAgentReply)
 			if err != nil {
@@ -633,7 +656,61 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			return fmt.Errorf("create agent %q: unsupported driver %q", acfg.Name, driver)
 		}
 		runners = append(runners, runtime)
+		runtimesByName[acfg.Name] = runtime
 		log.Printf("agent %s registered (driver=%s)", acfg.Name, driver)
+	}
+
+	bindingsByBot := make(map[string][]*agentBinding, len(cfg.Bots))
+	var scheduled []*agentBinding
+	for _, bot := range cfg.Bots {
+		key := botKey(bot.Type, bot.Name)
+		for index, bindingConfig := range bot.Agents {
+			runtime := runtimesByName[bindingConfig.Agent]
+			if runtime == nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("bot %q binding %d references unavailable agent %q", bot.Name, index+1, bindingConfig.Agent)
+			}
+
+			label := bindingConfig.Name
+			if strings.TrimSpace(label) == "" {
+				label = fmt.Sprintf("%s/%d", bot.Name, index+1)
+			}
+			matcher, err := agent.NewMatcher(label, bindingConfig.When)
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("create bot %q binding %d: %w", bot.Name, index+1, err)
+			}
+
+			location := time.UTC
+			if agent.IsTimeExpression(bindingConfig.When) {
+				location, err = time.LoadLocation(bindingConfig.Timezone)
+				if err != nil {
+					stopRuntimes(runners)
+					runtimeCancel()
+					return fmt.Errorf("create bot %q binding %q: load timezone: %w", bot.Name, label, err)
+				}
+			}
+
+			binding := &agentBinding{
+				name:     label,
+				agent:    bindingConfig.Agent,
+				bot:      bot,
+				when:     bindingConfig.When,
+				prompt:   strings.TrimSpace(bindingConfig.Prompt),
+				channel:  strings.TrimSpace(bindingConfig.Channel),
+				target:   strings.TrimSpace(bindingConfig.Target),
+				timezone: location,
+				matcher:  matcher,
+				runtime:  runtime,
+			}
+			bindingsByBot[key] = append(bindingsByBot[key], binding)
+			if matcher.NeedsTick() {
+				scheduled = append(scheduled, binding)
+			}
+			log.Printf("bot %s bound to agent %s (when=%q)", bot.Name, binding.agent, binding.when)
+		}
 	}
 
 	s.mu.Lock()
@@ -646,6 +723,8 @@ func (s *Server) startConnectors(cfg config.Config) error {
 	s.routesByBot = make(map[string]map[string]struct{})
 	s.runtimeCancel = runtimeCancel
 	s.agents = runners
+	s.bindingsByBot = bindingsByBot
+	s.scheduled = scheduled
 	s.tickStop = nil
 	s.mu.Unlock()
 
@@ -667,15 +746,8 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		go connector.Run(runtimeCtx)
 	}
 
-	// Start the 1-minute clock ticker if any agent uses time expressions.
-	needsTick := false
-	for _, r := range runners {
-		if r.NeedsTick() {
-			needsTick = true
-			break
-		}
-	}
-	if needsTick {
+	// Start the 1-minute clock ticker only when a bot binding uses time.
+	if len(scheduled) > 0 {
 		stop := make(chan struct{})
 		s.mu.Lock()
 		s.tickStop = stop
@@ -700,6 +772,8 @@ func (s *Server) stopAgentRuntime() {
 	tickStop := s.tickStop
 	s.runtimeCancel = nil
 	s.agents = nil
+	s.bindingsByBot = nil
+	s.scheduled = nil
 	s.tickStop = nil
 	s.mu.Unlock()
 
@@ -761,19 +835,73 @@ func (s *Server) runClockTicker(stop chan struct{}) {
 	}
 }
 
-// dispatchTick generates a synthetic tick event and dispatches it to all
-// agent runners that match.
+// dispatchTick evaluates every time-aware bot binding. Unlike message routing,
+// scheduled bindings fan out so independent jobs due in the same minute all
+// run.
 func (s *Server) dispatchTick() {
-	tick := agent.TickEvent()
-
 	s.mu.RLock()
-	runners := s.agents
+	bindings := append([]*agentBinding(nil), s.scheduled...)
 	s.mu.RUnlock()
 
-	for _, runner := range runners {
-		if runner.Matches(tick) {
-			runner.Handle(tick)
+	now := time.Now()
+	for _, binding := range bindings {
+		localNow := now.In(binding.timezone)
+		if !binding.matcher.MatchesAt(agent.TickEvent(), localNow) {
+			continue
 		}
+
+		runMinute := localNow.Format("2006-01-02T15:04-07:00")
+		runKey := botKey(binding.bot.Type, binding.bot.Name) + "/" + binding.name
+		s.mu.Lock()
+		if s.scheduleRuns[runKey] == runMinute {
+			s.mu.Unlock()
+			continue
+		}
+		s.scheduleRuns[runKey] = runMinute
+		s.mu.Unlock()
+
+		channel := binding.channel
+		target := binding.target
+		if channel == "" && target == "" {
+			channel = "schedule:" + binding.name
+		}
+		channelName := ""
+		if channel != "" {
+			key := botKey(binding.bot.Type, binding.bot.Name)
+			s.mu.RLock()
+			connector := s.connectors[key]
+			s.mu.RUnlock()
+			if resolver, ok := connector.(upstream.ChannelResolver); ok {
+				resolveCtx, cancel := context.WithTimeout(s.rootCtx, 20*time.Second)
+				resolvedChannel, resolvedName, err := resolver.ResolveChannel(resolveCtx, channel)
+				cancel()
+				if err != nil {
+					log.Printf("scheduled binding %s on bot %s: resolve channel: %v", binding.name, binding.bot.Name, err)
+					continue
+				}
+				channel = resolvedChannel
+				channelName = resolvedName
+			}
+		}
+		if target == "" && channel != "" {
+			target = "channel:" + channel
+		}
+
+		event := protocol.Event{
+			Timestamp:   now.UTC(),
+			Service:     binding.bot.Type,
+			Bot:         binding.bot.Name,
+			Kind:        "message",
+			Direction:   "in",
+			User:        "schedule:" + binding.name,
+			Target:      target,
+			Channel:     channel,
+			ChannelName: channelName,
+			Schedule:    binding.name,
+			Notify:      true,
+			Text:        binding.prompt,
+		}
+		s.publishToBinding(event, binding)
 	}
 }
 
@@ -934,7 +1062,7 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 		s.mu.RUnlock()
 		botRef.BotID = connector.Identity()
 		event.Mentions = mentionsAgent(event, botRef)
-		event.Direct = isDirectToAgent(event)
+		event.Direct = event.Direct || isDirectToAgent(event)
 		event.Notify = event.Direction == "in" && !event.Self &&
 			(event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
 
@@ -1078,12 +1206,34 @@ func (s *Server) handleRequest(ctx context.Context, req protocol.Request) protoc
 // daemonStatus returns a snapshot of the daemon's current runtime state.
 func (s *Server) daemonStatus() *protocol.DaemonStatus {
 	s.mu.RLock()
+	driverByAgent := make(map[string]string, len(s.cfg.Agents))
+	for _, configuredAgent := range s.cfg.Agents {
+		driver := strings.TrimSpace(configuredAgent.Driver)
+		if driver == "" {
+			driver = "command"
+		}
+		driverByAgent[configuredAgent.Name] = driver
+	}
 	bots := make([]protocol.BotStatus, 0, len(s.bots))
-	for _, bot := range s.bots {
+	for key, bot := range s.bots {
+		bindings := s.bindingsByBot[key]
+		bindingInfo := make([]protocol.AgentBindingInfo, 0, len(bindings))
+		for _, binding := range bindings {
+			name := binding.name
+			if strings.HasPrefix(name, bot.Name+"/") {
+				name = ""
+			}
+			bindingInfo = append(bindingInfo, protocol.AgentBindingInfo{
+				Name:  name,
+				Agent: binding.agent,
+				When:  binding.when,
+			})
+		}
 		bots = append(bots, protocol.BotStatus{
 			Name:        bot.Name,
 			Service:     bot.Service,
 			DisplayName: bot.DisplayName,
+			Agents:      bindingInfo,
 		})
 	}
 	sort.Slice(bots, func(i, j int) bool {
@@ -1095,13 +1245,9 @@ func (s *Server) daemonStatus() *protocol.DaemonStatus {
 
 	agents := make([]protocol.AgentInfo, 0, len(s.agents))
 	for _, r := range s.agents {
-		when := r.When()
-		if when == "" {
-			when = "notify"
-		}
 		agents = append(agents, protocol.AgentInfo{
-			Name: r.Name(),
-			When: when,
+			Name:   r.Name(),
+			Driver: driverByAgent[r.Name()],
 		})
 	}
 
@@ -1190,6 +1336,14 @@ func (s *Server) readEvents(service string, bot string, limit int, sinceID int64
 }
 
 func (s *Server) publish(event protocol.Event) {
+	s.publishEvent(event, nil)
+}
+
+func (s *Server) publishToBinding(event protocol.Event, binding *agentBinding) {
+	s.publishEvent(event, binding)
+}
+
+func (s *Server) publishEvent(event protocol.Event, selectedBinding *agentBinding) {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}
@@ -1206,8 +1360,9 @@ func (s *Server) publish(event protocol.Event) {
 
 	event.Self = botRef.BotID != "" && event.User == botRef.BotID
 	event.Mentions = mentionsAgent(event, botRef)
-	event.Direct = isDirectToAgent(event)
-	event.Notify = event.Direction == "in" && !event.Self && (event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
+	event.Direct = event.Direct || isDirectToAgent(event)
+	event.Notify = event.Direction == "in" && !event.Self &&
+		(event.Schedule != "" || event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
 
 	if event.Kind == "status" {
 		log.Printf("[%s] %s", key, event.Text)
@@ -1246,14 +1401,23 @@ func (s *Server) publish(event protocol.Event) {
 		}
 	}
 
-	// Dispatch to agent runners before taking the write lock.
-	s.mu.RLock()
-	agents := s.agents
-	s.mu.RUnlock()
+	// A scheduled rule has already selected its runtime. Normal inbound
+	// messages use ordered, first-match routing within their containing bot.
+	if selectedBinding != nil {
+		selectedBinding.runtime.Handle(event)
+	} else {
+		s.mu.RLock()
+		bindings := append([]*agentBinding(nil), s.bindingsByBot[key]...)
+		s.mu.RUnlock()
 
-	for _, runner := range agents {
-		if runner.Matches(event) {
-			runner.Handle(event)
+		for _, binding := range bindings {
+			if binding.matcher.Matches(event) {
+				if s.debug {
+					log.Printf("[%s] routed event %d to agent %s via binding %s", key, event.ID, binding.agent, binding.name)
+				}
+				binding.runtime.Handle(event)
+				break
+			}
 		}
 	}
 

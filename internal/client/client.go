@@ -305,8 +305,6 @@ func runLocalMode(options localOptions, dependencies localDependencies) error {
 	agentConfig := config.AgentConfig{
 		Name:         "local-" + options.driver,
 		Driver:       options.driver,
-		Bots:         []string{localBotName},
-		When:         "notify",
 		Workdir:      workdir,
 		Instructions: instructions,
 		Timeout:      options.timeout,
@@ -341,6 +339,10 @@ func runLocalMode(options localOptions, dependencies localDependencies) error {
 			Name:        localBotName,
 			Type:        "local",
 			DisplayName: "Pantalk Local",
+			Agents: []config.BotAgentBinding{{
+				Agent: agentConfig.Name,
+				When:  "notify",
+			}},
 		}},
 		Agents: []config.AgentConfig{agentConfig},
 	}
@@ -707,10 +709,17 @@ func runStatus(service string, args []string) int {
 			name = b.Name
 		}
 		fmt.Printf("  %-20s  %s\n", name, b.Service)
+		for _, binding := range b.Agents {
+			label := binding.Agent
+			if binding.Name != "" {
+				label = binding.Name + " -> " + binding.Agent
+			}
+			fmt.Printf("    %-18s  when: %s\n", label, binding.When)
+		}
 	}
 	fmt.Printf("agents:  %d\n", len(st.Agents))
 	for _, a := range st.Agents {
-		fmt.Printf("  %-20s  when: %s\n", a.Name, a.When)
+		fmt.Printf("  %-20s  %s\n", a.Name, a.Driver)
 	}
 	if st.Notifications != nil {
 		fmt.Printf("notifications: total=%d unseen=%d\n", st.Notifications.Total, st.Notifications.Unseen)

@@ -1,15 +1,6 @@
-// Package agent implements notification-triggered agent runners for pantalkd.
-//
-// When notifications arrive for a configured bot, the runner evaluates a
-// "when" expression against the event. Matching events are buffered for a
-// configurable window, then the runner exec's a preconfigured command. The
-// command is never interpreted by a shell - it is exec'd directly from an
-// argv slice. Unless the daemon is started with --allow-exec, only known
-// agent binaries (claude, codex, aider, goose) are permitted.
-//
-// Time-based triggers are supported via at() and every() functions in the
-// when expression. The server generates synthetic "tick" events every minute
-// which flow through the same matching pipeline.
+// Package agent implements reusable command and persistent agent runtimes plus
+// the expression matcher used by bot-level bindings. The server owns bot
+// selection and binding order.
 package agent
 
 import (
@@ -23,6 +14,8 @@ import (
 	"time"
 
 	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
 	"github.com/pantalk/pantalk/internal/protocol"
 )
@@ -40,14 +33,13 @@ var AllowedCommands = map[string]bool{
 
 // Config describes a single agent definition from the YAML config.
 type Config struct {
-	Name     string   `yaml:"name"`
-	Bots     []string `yaml:"bots"`     // optional configured bot-name allowlist
-	When     string   `yaml:"when"`     // expr expression evaluated against each event
-	Command  Command  `yaml:"command"`  // argv - string or []string, exec'd directly
-	Workdir  string   `yaml:"workdir"`  // optional working directory
-	Buffer   int      `yaml:"buffer"`   // seconds to batch notifications (default 30)
-	Timeout  int      `yaml:"timeout"`  // max runtime in seconds (default 120)
-	Cooldown int      `yaml:"cooldown"` // min seconds between runs (default 60)
+	Name     string  `yaml:"name"`
+	When     string  `yaml:"when"`     // expr expression evaluated against each event
+	Command  Command `yaml:"command"`  // argv - string or []string, exec'd directly
+	Workdir  string  `yaml:"workdir"`  // optional working directory
+	Buffer   int     `yaml:"buffer"`   // seconds to batch notifications (default 30)
+	Timeout  int     `yaml:"timeout"`  // max runtime in seconds (default 120)
+	Cooldown int     `yaml:"cooldown"` // min seconds between runs (default 60)
 }
 
 // exprEnv is the environment exposed to "when" expressions. Field names are
@@ -55,15 +47,19 @@ type Config struct {
 // (e.g. notify, direct, channel).
 type exprEnv struct {
 	// Event fields
-	Notify   bool   `expr:"notify"`
-	Direct   bool   `expr:"direct"`
-	Mentions bool   `expr:"mentions"`
-	Channel  string `expr:"channel"`
-	Thread   string `expr:"thread"`
-	Bot      string `expr:"bot"`
-	Service  string `expr:"service"`
-	User     string `expr:"user"`
-	Text     string `expr:"text"`
+	Notify      bool       `expr:"notify"`
+	Direct      bool       `expr:"direct"`
+	Mentions    bool       `expr:"mentions"`
+	Channel     ChannelRef `expr:"channel"`
+	ChannelID   string     `expr:"channel_id"`
+	ChannelName string     `expr:"channel_name"`
+	Thread      string     `expr:"thread"`
+	Bot         string     `expr:"bot"`
+	Service     string     `expr:"service"`
+	User        string     `expr:"user"`
+	Text        string     `expr:"text"`
+	Schedule    string     `expr:"schedule"`
+	Scheduled   bool       `expr:"scheduled"`
 
 	// Time fields - populated on tick events, zero on message events.
 	Tick    bool   `expr:"tick"`
@@ -75,6 +71,58 @@ type exprEnv struct {
 	// Exposed as at() and every() in expressions via expr tags.
 	AtFn    func(times ...string) (bool, error) `expr:"at"`
 	EveryFn func(interval string) (bool, error) `expr:"every"`
+}
+
+// ChannelRef preserves a provider's stable channel ID and optional friendly
+// name while allowing the expression's `channel` value to compare with either.
+type ChannelRef struct {
+	ID   string
+	Name string
+}
+
+func (c ChannelRef) matches(selector string) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == c.ID || selector == c.Name {
+		return true
+	}
+	if c.Name == "" {
+		return false
+	}
+	return strings.TrimPrefix(selector, "#") == strings.TrimPrefix(c.Name, "#")
+}
+
+func (exprEnv) ChannelEqualString(channel ChannelRef, selector string) bool {
+	return channel.matches(selector)
+}
+
+func (exprEnv) StringEqualChannel(selector string, channel ChannelRef) bool {
+	return channel.matches(selector)
+}
+
+func (exprEnv) ChannelNotEqualString(channel ChannelRef, selector string) bool {
+	return !channel.matches(selector)
+}
+
+func (exprEnv) StringNotEqualChannel(selector string, channel ChannelRef) bool {
+	return !channel.matches(selector)
+}
+
+func (exprEnv) ChannelInStrings(channel ChannelRef, selectors any) bool {
+	switch values := selectors.(type) {
+	case []string:
+		for _, selector := range values {
+			if channel.matches(selector) {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range values {
+			if selector, ok := value.(string); ok && channel.matches(selector) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // weekdayName converts a time.Weekday to a short lowercase name.
@@ -174,7 +222,6 @@ func everyFunc(tick bool, hour, minute int, interval string) (bool, error) {
 type Runner struct {
 	cfg     Config
 	program *vm.Program
-	bots    map[string]struct{}
 
 	mu         sync.Mutex
 	running    bool
@@ -211,17 +258,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 		return nil, fmt.Errorf("agent %q: invalid when expression: %w", cfg.Name, err)
 	}
 
-	selectedBots := make(map[string]struct{}, len(cfg.Bots))
-	for _, bot := range cfg.Bots {
-		if bot = strings.TrimSpace(bot); bot != "" {
-			selectedBots[bot] = struct{}{}
-		}
-	}
-
 	return &Runner{
 		cfg:     cfg,
 		program: program,
-		bots:    selectedBots,
 	}, nil
 }
 
@@ -235,17 +274,15 @@ func (r *Runner) Matches(event protocol.Event) bool {
 // time for tick fields (hour, minute, weekday). This allows deterministic
 // testing of time-based expressions.
 func (r *Runner) MatchesAt(event protocol.Event, now time.Time) bool {
-	if len(r.bots) > 0 {
-		if _, selected := r.bots[event.Bot]; !selected {
-			return false
-		}
-	}
 	return matchesAt(r.cfg.Name, r.program, event, now)
 }
 
 func compileWhen(whenExpr string) (*vm.Program, error) {
 	return expr.Compile(whenExpr,
 		expr.Env(exprEnv{}),
+		expr.Operator("==", "ChannelEqualString", "StringEqualChannel"),
+		expr.Operator("!=", "ChannelNotEqualString", "StringNotEqualChannel"),
+		expr.Operator("in", "ChannelInStrings"),
 		expr.AsBool(),
 	)
 }
@@ -265,15 +302,19 @@ func matchesAt(name string, program *vm.Program, event protocol.Event, now time.
 	}
 
 	env := exprEnv{
-		Notify:   event.Notify,
-		Direct:   event.Direct,
-		Mentions: event.Mentions,
-		Channel:  event.Channel,
-		Thread:   event.Thread,
-		Bot:      event.Bot,
-		Service:  event.Service,
-		User:     event.User,
-		Text:     event.Text,
+		Notify:      event.Notify,
+		Direct:      event.Direct,
+		Mentions:    event.Mentions,
+		Channel:     ChannelRef{ID: event.Channel, Name: event.ChannelName},
+		ChannelID:   event.Channel,
+		ChannelName: event.ChannelName,
+		Thread:      event.Thread,
+		Bot:         event.Bot,
+		Service:     event.Service,
+		User:        event.User,
+		Text:        event.Text,
+		Schedule:    event.Schedule,
+		Scheduled:   event.Schedule != "",
 	}
 
 	if isTick {
@@ -413,12 +454,30 @@ func needsTick(when string) bool {
 	if w == "" {
 		w = "notify"
 	}
-	return strings.Contains(w, "at(") ||
-		strings.Contains(w, "every(") ||
-		strings.Contains(w, "tick") ||
-		strings.Contains(w, "hour") ||
-		strings.Contains(w, "minute") ||
-		strings.Contains(w, "weekday")
+	tree, err := parser.Parse(w)
+	if err != nil {
+		return false
+	}
+	detector := &timeExpressionDetector{}
+	ast.Walk(&tree.Node, detector)
+	return detector.found
+}
+
+type timeExpressionDetector struct {
+	found bool
+}
+
+func (d *timeExpressionDetector) Visit(node *ast.Node) {
+	if d.found {
+		return
+	}
+	switch value := (*node).(type) {
+	case *ast.IdentifierNode:
+		switch value.Value {
+		case "tick", "hour", "minute", "weekday", "at", "every":
+			d.found = true
+		}
+	}
 }
 
 // TickEvent returns a synthetic event that represents a clock tick.

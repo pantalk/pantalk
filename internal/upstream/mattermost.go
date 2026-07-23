@@ -310,7 +310,9 @@ func (m *MattermostConnector) readWebsocketLoop(ctx context.Context, conn *webso
 			continue
 		}
 
-		if !m.acceptsChannel(post.ChannelID) {
+		channelType, _ := wsEvent.Data["channel_type"].(string)
+		direct := channelType == "D"
+		if !direct && !m.acceptsChannel(post.ChannelID) {
 			continue
 		}
 
@@ -324,6 +326,7 @@ func (m *MattermostConnector) readWebsocketLoop(ctx context.Context, conn *webso
 			Target:    "channel:" + post.ChannelID,
 			Channel:   post.ChannelID,
 			Thread:    post.RootID,
+			Direct:    direct,
 			Text:      post.Message,
 		}
 

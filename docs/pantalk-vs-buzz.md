@@ -48,7 +48,7 @@ graph TD
 | **Runs on**           | A server you operate                                      | Your laptop, a VPS, or a container                            |
 | **Protocol**          | Nostr (NIP-01/29/42), signed events                       | Each platform's native protocol, normalized                   |
 | **Agent identity**    | Native member with its own keypair and audit trail        | A bot account per platform, presented as one identity         |
-| **Agent runner**      | ACP harness (`BUZZ_ACP_AGENT_COMMAND`)                    | `agents:` config with `when:` expressions                     |
+| **Agent runner**      | ACP harness (`BUZZ_ACP_AGENT_COMMAND`)                    | Reusable agents with ordered per-bot `when:` bindings          |
 | **Agent interface**   | JSON in / JSON out CLI                                    | JSON over a Unix socket, plus a CLI                           |
 | **History**           | Full-text search across the workspace (NIP-50)            | Local SQLite across every connected platform                  |
 | **Language**          | Rust                                                      | Go                                                             |
@@ -70,7 +70,7 @@ If you can move your team, and you want one audited log for everything, Buzz is 
 ## What Pantalk Does That Buzz Doesn't
 
 - **Meets humans where they already are.** This is the whole thesis. The hardest part of agent adoption is not the agent - it is getting people to change where they talk. Pantalk's adoption cost is zero: your colleagues keep using Slack, your customers keep using WhatsApp, your on-call keeps getting SMS.
-- **Ten platforms, one interface.** One `agents:` block serves every channel at once. A single agent can be mentioned in Slack, DM'd on Telegram, and texted over Twilio, and it is the same event stream and the same runner.
+- **Ten platforms, one interface.** One reusable agent definition can be bound by multiple bots. A single runtime can be mentioned in Slack, DM'd on Telegram, and texted over Twilio while each conversation keeps an isolated session.
 - **Reachable from a phone with no app.** WhatsApp, SMS, and iMessage mean your agent is reachable by anyone with a phone number, including people who will never install anything.
 - **No infrastructure.** A single binary and a SQLite file. No Postgres, no Redis, no search cluster, no server to operate.
 - **Works with platforms you don't control.** You can bridge a customer's Slack or a community's IRC channel. You cannot ask them to join your workspace.
@@ -93,7 +93,7 @@ They are not really competing for the same slot. Buzz is where your team could w
 
 Technically, yes - Buzz is a Nostr relay, and a `nostr` connector speaking NIP-01/29/42 would reach it like any other platform.
 
-But it would be the least useful connector in the set, because Buzz already ships Pantalk's core feature. Its ACP harness spawns an agent binary on mentions with a channel allowlist, turn timeouts, and dedup - the same job as Pantalk's `agents:` block. Routing through Pantalk would also *downgrade* the agent, collapsing a native member with its own keypair and audit trail into a single relay identity forwarding text.
+But it would be the least useful connector in the set, because Buzz already ships Pantalk's core feature. Its ACP harness spawns an agent binary on mentions with a channel allowlist, turn timeouts, and dedup—the same job as Pantalk's per-bot agent bindings. Routing through Pantalk would also *downgrade* the agent, collapsing a native member with its own keypair and audit trail into a single relay identity forwarding text.
 
 The shape that would genuinely add something is the reverse: bridging a Buzz channel *out* to the Slack, WhatsApp, or SMS where everyone else is. That remains open.
 

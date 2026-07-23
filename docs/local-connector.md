@@ -13,15 +13,24 @@ pantalk local --workdir .
 ```
 
 `pantalk local` starts an embedded Pantalk server, a `local-test` connector, one
-native `local-codex` agent, and the interactive chat. The generated agent uses:
+native `local-codex` agent, and the interactive chat. Its generated definition
+and bot binding are equivalent to:
 
 ```yaml
-driver: codex
-when: notify
-timeout: 900
-codex:
-  sandbox: read-only
-  approval_policy: never
+agents:
+  - name: local-codex
+    driver: codex
+    timeout: 900
+    codex:
+      sandbox: read-only
+      approval_policy: never
+
+bots:
+  - name: local-test
+    type: local
+    agents:
+      - agent: local-codex
+        when: notify
 ```
 
 Conversation state persists at `~/.local/share/pantalk/local.db`, separate from
@@ -62,12 +71,13 @@ explicitly:
 bots:
   - name: local-test
     type: local
+    agents:
+      - agent: engineering-assistant
+        when: notify
 
 agents:
   - name: engineering-assistant
     driver: codex
-    bots:
-      - local-test
     workdir: /workspace/cbk-platform
     timeout: 900
     codex:

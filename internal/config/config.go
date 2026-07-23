@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	_ "time/tzdata"
 
 	"github.com/pantalk/pantalk/internal/agent"
 	"gopkg.in/yaml.v3"
@@ -59,33 +61,44 @@ type MediaConfig struct {
 }
 
 type BotConfig struct {
-	Name          string   `yaml:"name"`
-	Type          string   `yaml:"type"`
-	DisplayName   string   `yaml:"display_name"`
-	BotToken      string   `yaml:"bot_token"`
-	AppLevelToken string   `yaml:"app_level_token"`
-	Transport     string   `yaml:"transport"`
-	Endpoint      string   `yaml:"endpoint"`
-	Password      string   `yaml:"password"`
-	AuthToken     string   `yaml:"auth_token"`
-	AccountSID    string   `yaml:"account_sid"`
-	PhoneNumber   string   `yaml:"phone_number"`
-	APIKey        string   `yaml:"api_key"`
-	BotEmail      string   `yaml:"bot_email"`
-	AccessToken   string   `yaml:"access_token"`
-	DBPath        string   `yaml:"db_path"`
-	Channels      []string `yaml:"channels"`
+	Name          string            `yaml:"name"`
+	Type          string            `yaml:"type"`
+	DisplayName   string            `yaml:"display_name"`
+	BotToken      string            `yaml:"bot_token"`
+	AppLevelToken string            `yaml:"app_level_token"`
+	Transport     string            `yaml:"transport"`
+	Endpoint      string            `yaml:"endpoint"`
+	Password      string            `yaml:"password"`
+	AuthToken     string            `yaml:"auth_token"`
+	AccountSID    string            `yaml:"account_sid"`
+	PhoneNumber   string            `yaml:"phone_number"`
+	APIKey        string            `yaml:"api_key"`
+	BotEmail      string            `yaml:"bot_email"`
+	AccessToken   string            `yaml:"access_token"`
+	DBPath        string            `yaml:"db_path"`
+	Channels      []string          `yaml:"channels"`
+	Agents        []BotAgentBinding `yaml:"agents"`
 }
 
-// AgentConfig describes either a command launched for matching notifications
-// or a persistent native agent connection. Bots select the messaging
-// connections an agent may consume; leaving it empty retains the legacy
-// command-runner behavior of matching every bot.
+// BotAgentBinding routes events from one bot to a reusable agent definition.
+// Message bindings are evaluated in order and the first match wins. Bindings
+// containing time expressions are also evaluated by the clock scheduler.
+type BotAgentBinding struct {
+	Name     string `yaml:"name"`     // stable rule identifier; required for time-based bindings
+	Agent    string `yaml:"agent"`    // name from the top-level agents section
+	When     string `yaml:"when"`     // expression evaluated against bot events (default: notify)
+	Prompt   string `yaml:"prompt"`   // scheduled turn text; required for time-based bindings
+	Timezone string `yaml:"timezone"` // IANA timezone for time expressions (default: UTC)
+	Channel  string `yaml:"channel"`  // optional scheduled response channel
+	Target   string `yaml:"target"`   // optional scheduled response target
+}
+
+// AgentConfig describes how to run one reusable agent. Event selection belongs
+// to BotAgentBinding so one definition can be reused without duplicating
+// driver, workdir, and instruction settings.
 type AgentConfig struct {
 	Name         string            `yaml:"name"`
-	Driver       string            `yaml:"driver"`       // command (default for legacy configs), codex, or claude
-	Bots         []string          `yaml:"bots"`         // configured bot names this agent handles
-	When         string            `yaml:"when"`         // expr expression evaluated against each event (default: "notify")
+	Driver       string            `yaml:"driver"`       // command (default when command is set), codex, or claude
 	Command      agent.Command     `yaml:"command"`      // command driver only; exec'd directly, never via shell
 	Workdir      string            `yaml:"workdir"`      // working directory (optional)
 	Instructions string            `yaml:"instructions"` // persistent-agent developer instructions
@@ -207,6 +220,18 @@ func applyDefaults(cfg *Config) {
 		}
 		cfg.Server.Media.AttachRoots = roots
 	}
+
+	for botIndex := range cfg.Bots {
+		for bindingIndex := range cfg.Bots[botIndex].Agents {
+			binding := &cfg.Bots[botIndex].Agents[bindingIndex]
+			if strings.TrimSpace(binding.When) == "" {
+				binding.When = "notify"
+			}
+			if agent.IsTimeExpression(binding.When) && strings.TrimSpace(binding.Timezone) == "" {
+				binding.Timezone = "UTC"
+			}
+		}
+	}
 }
 
 func validate(cfg Config, allowExec bool) error {
@@ -326,21 +351,6 @@ func validate(cfg Config, allowExec bool) error {
 		}
 		seenAgents[a.Name] = struct{}{}
 
-		seenAgentBots := map[string]struct{}{}
-		for _, botName := range a.Bots {
-			botName = strings.TrimSpace(botName)
-			if botName == "" {
-				return fmt.Errorf("agent %q contains an empty bot name", a.Name)
-			}
-			if _, exists := seenBots[botName]; !exists {
-				return fmt.Errorf("agent %q references unknown bot %q", a.Name, botName)
-			}
-			if _, exists := seenAgentBots[botName]; exists {
-				return fmt.Errorf("agent %q references bot %q more than once", a.Name, botName)
-			}
-			seenAgentBots[botName] = struct{}{}
-		}
-
 		driver := strings.TrimSpace(a.Driver)
 		if driver == "" && len(a.Command) > 0 {
 			driver = "command"
@@ -362,9 +372,6 @@ func validate(cfg Config, allowExec bool) error {
 			if len(a.Command) > 0 {
 				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
 			}
-			if len(a.Bots) == 0 {
-				return fmt.Errorf("agent %q: codex driver requires at least one bot", a.Name)
-			}
 			switch a.Codex.Sandbox {
 			case "", "read-only", "workspace-write", "danger-full-access":
 			default:
@@ -379,9 +386,6 @@ func validate(cfg Config, allowExec bool) error {
 			if len(a.Command) > 0 {
 				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
 			}
-			if len(a.Bots) == 0 {
-				return fmt.Errorf("agent %q: claude driver requires at least one bot", a.Name)
-			}
 			switch a.Claude.PermissionMode {
 			case "", "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan":
 			default:
@@ -391,6 +395,64 @@ func validate(cfg Config, allowExec bool) error {
 			return fmt.Errorf("agent %q requires driver or command", a.Name)
 		default:
 			return fmt.Errorf("agent %q: unsupported driver %q (use command, codex, or claude)", a.Name, driver)
+		}
+	}
+
+	for _, bot := range cfg.Bots {
+		seenBindings := make(map[string]struct{}, len(bot.Agents))
+		for index, binding := range bot.Agents {
+			ruleLabel := fmt.Sprintf("bot %q agent binding %d", bot.Name, index+1)
+			agentName := strings.TrimSpace(binding.Agent)
+			if agentName == "" {
+				return fmt.Errorf("%s requires agent", ruleLabel)
+			}
+			if _, exists := seenAgents[agentName]; !exists {
+				return fmt.Errorf("%s references unknown agent %q", ruleLabel, agentName)
+			}
+
+			bindingName := strings.TrimSpace(binding.Name)
+			if bindingName != "" {
+				if _, exists := seenBindings[bindingName]; exists {
+					return fmt.Errorf("bot %q contains duplicate agent binding name %q", bot.Name, bindingName)
+				}
+				seenBindings[bindingName] = struct{}{}
+			}
+
+			if err := agent.ValidateWhen(binding.When); err != nil {
+				return fmt.Errorf("%s: %w", ruleLabel, err)
+			}
+
+			timeBased := agent.IsTimeExpression(binding.When)
+			if !timeBased {
+				if strings.TrimSpace(binding.Prompt) != "" {
+					return fmt.Errorf("%s: prompt requires a time-based when expression", ruleLabel)
+				}
+				if strings.TrimSpace(binding.Timezone) != "" {
+					return fmt.Errorf("%s: timezone requires a time-based when expression", ruleLabel)
+				}
+				if strings.TrimSpace(binding.Channel) != "" || strings.TrimSpace(binding.Target) != "" {
+					return fmt.Errorf("%s: channel and target are only valid for time-based bindings", ruleLabel)
+				}
+				continue
+			}
+
+			if bindingName == "" {
+				return fmt.Errorf("%s: time-based binding requires name", ruleLabel)
+			}
+			if strings.TrimSpace(binding.Prompt) == "" {
+				return fmt.Errorf("%s: time-based binding requires prompt", ruleLabel)
+			}
+			if _, err := time.LoadLocation(binding.Timezone); err != nil {
+				return fmt.Errorf("%s: invalid timezone %q: %w", ruleLabel, binding.Timezone, err)
+			}
+			if strings.TrimSpace(binding.Channel) != "" && strings.TrimSpace(binding.Target) != "" {
+				return fmt.Errorf("%s: channel and target cannot both be set", ruleLabel)
+			}
+			if bot.Type != "local" &&
+				strings.TrimSpace(binding.Channel) == "" &&
+				strings.TrimSpace(binding.Target) == "" {
+				return fmt.Errorf("%s: scheduled binding on %s requires channel or target", ruleLabel, bot.Type)
+			}
 		}
 	}
 

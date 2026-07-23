@@ -32,6 +32,28 @@ type serverFakeClaudeClient struct {
 	closed   bool
 }
 
+type serverFakeRuntime struct {
+	name   string
+	mu     sync.Mutex
+	events []protocol.Event
+}
+
+func (f *serverFakeRuntime) Name() string { return f.name }
+
+func (f *serverFakeRuntime) Handle(event protocol.Event) {
+	f.mu.Lock()
+	f.events = append(f.events, event)
+	f.mu.Unlock()
+}
+
+func (f *serverFakeRuntime) Stop() {}
+
+func (f *serverFakeRuntime) eventSnapshot() []protocol.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]protocol.Event(nil), f.events...)
+}
+
 func (f *serverFakeClaudeClient) RunTurn(
 	_ context.Context,
 	sessionID string,
@@ -127,6 +149,106 @@ func TestRouteKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("routeKey(%q, %q, %q) = %q, want %q", tt.target, tt.channel, tt.thread, got, tt.want)
 		}
+	}
+}
+
+func TestPublishUsesFirstMatchingBotBinding(t *testing.T) {
+	first := &serverFakeRuntime{name: "first"}
+	second := &serverFakeRuntime{name: "second"}
+	firstMatcher, err := agent.NewMatcher("first", "direct")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondMatcher, err := agent.NewMatcher("second", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(config.Config{}, "", "", "")
+	s.bots["local:bot"] = protocol.BotRef{Service: "local", Name: "bot"}
+	s.bindingsByBot["local:bot"] = []*agentBinding{
+		{name: "first", agent: "first", matcher: firstMatcher, runtime: first},
+		{name: "second", agent: "second", matcher: secondMatcher, runtime: second},
+	}
+
+	s.publish(protocol.Event{
+		Service:   "local",
+		Bot:       "bot",
+		Kind:      "message",
+		Direction: "in",
+		Target:    "dm:alice",
+		Channel:   "dm:alice",
+		User:      "alice",
+		Text:      "hello",
+	})
+
+	if got := len(first.eventSnapshot()); got != 1 {
+		t.Fatalf("expected first binding to receive event, got %d", got)
+	}
+	if got := len(second.eventSnapshot()); got != 0 {
+		t.Fatalf("expected fallback binding not to run, got %d events", got)
+	}
+}
+
+func TestDispatchTickRunsEveryDueBindingWithCompleteEvents(t *testing.T) {
+	first := &serverFakeRuntime{name: "first"}
+	second := &serverFakeRuntime{name: "second"}
+	tickMatcher, err := agent.NewMatcher("schedule", "tick")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(config.Config{}, "", "", "")
+	s.bots["local:automation"] = protocol.BotRef{Service: "local", Name: "automation"}
+	s.scheduled = []*agentBinding{
+		{
+			name:     "morning",
+			agent:    "first",
+			bot:      config.BotConfig{Name: "automation", Type: "local"},
+			prompt:   "morning prompt",
+			timezone: time.UTC,
+			matcher:  tickMatcher,
+			runtime:  first,
+		},
+		{
+			name:     "review",
+			agent:    "second",
+			bot:      config.BotConfig{Name: "automation", Type: "local"},
+			prompt:   "review prompt",
+			timezone: time.UTC,
+			matcher:  tickMatcher,
+			runtime:  second,
+		},
+	}
+
+	s.dispatchTick()
+
+	for _, test := range []struct {
+		runtime *serverFakeRuntime
+		name    string
+		prompt  string
+	}{
+		{first, "morning", "morning prompt"},
+		{second, "review", "review prompt"},
+	} {
+		events := test.runtime.eventSnapshot()
+		if len(events) != 1 {
+			t.Fatalf("expected one %s event, got %d", test.name, len(events))
+		}
+		event := events[0]
+		if event.Service != "local" ||
+			event.Bot != "automation" ||
+			event.Schedule != test.name ||
+			event.Channel != "schedule:"+test.name ||
+			event.Text != test.prompt ||
+			!event.Notify {
+			t.Fatalf("incomplete scheduled event: %+v", event)
+		}
+	}
+
+	s.dispatchTick()
+	if len(first.eventSnapshot()) != 1 || len(second.eventSnapshot()) != 1 {
+		t.Fatal("same scheduled occurrence ran more than once")
 	}
 }
 
@@ -532,11 +654,14 @@ func TestLocalMessageFlowsThroughNativeCodexRuntime(t *testing.T) {
 		Bots: []config.BotConfig{{
 			Name: "local-test",
 			Type: "local",
+			Agents: []config.BotAgentBinding{{
+				Agent: "engineering",
+				When:  "notify",
+			}},
 		}},
 		Agents: []config.AgentConfig{{
 			Name:    "engineering",
 			Driver:  "codex",
-			Bots:    []string{"local-test"},
 			Timeout: 1,
 		}},
 	}
@@ -595,6 +720,76 @@ func TestLocalMessageFlowsThroughNativeCodexRuntime(t *testing.T) {
 	}
 }
 
+func TestScheduledLocalBindingFlowsThroughNativeCodexRuntime(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer notificationStore.Close()
+
+	cfg := config.Config{
+		Bots: []config.BotConfig{{
+			Name: "local-automation",
+			Type: "local",
+			Agents: []config.BotAgentBinding{{
+				Name:     "morning-review",
+				Agent:    "engineering",
+				When:     "tick",
+				Prompt:   "review the repository",
+				Timezone: "UTC",
+			}},
+		}},
+		Agents: []config.AgentConfig{{
+			Name:    "engineering",
+			Driver:  "codex",
+			Timeout: 1,
+		}},
+	}
+	s := New(cfg, "", "", "")
+	s.rootCtx = context.Background()
+	s.notifications = notificationStore
+
+	fakeClient := &serverFakeCodexClient{}
+	s.startCodexClient = func(context.Context, codex.Config) (agent.CodexClient, error) {
+		return fakeClient, nil
+	}
+	if err := s.startConnectors(cfg); err != nil {
+		t.Fatalf("start connectors: %v", err)
+	}
+	defer s.stopAgentRuntime()
+
+	subscriptions := s.subscribe([]string{"local:local-automation"})
+	defer s.unsubscribe([]string{"local:local-automation"}, subscriptions)
+
+	s.dispatchTick()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-subscriptions[0]:
+			if event.Kind != "message" || event.Direction != "out" {
+				continue
+			}
+			if event.Text != "native Codex reply" ||
+				event.Channel != "schedule:morning-review" ||
+				event.Target != "channel:schedule:morning-review" {
+				t.Fatalf("unexpected scheduled reply: %+v", event)
+			}
+
+			fakeClient.mu.Lock()
+			prompts := append([]string(nil), fakeClient.prompts...)
+			fakeClient.mu.Unlock()
+			if len(prompts) != 1 || prompts[0] != "review the repository" {
+				t.Fatalf("unexpected scheduled prompts: %v", prompts)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("timed out waiting for scheduled Codex reply")
+		}
+	}
+}
+
 func TestLocalMessageFlowsThroughClaudeRuntime(t *testing.T) {
 	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
 	if err != nil {
@@ -606,11 +801,14 @@ func TestLocalMessageFlowsThroughClaudeRuntime(t *testing.T) {
 		Bots: []config.BotConfig{{
 			Name: "local-test",
 			Type: "local",
+			Agents: []config.BotAgentBinding{{
+				Agent: "local-claude",
+				When:  "notify",
+			}},
 		}},
 		Agents: []config.AgentConfig{{
 			Name:    "local-claude",
 			Driver:  "claude",
-			Bots:    []string{"local-test"},
 			Timeout: 1,
 		}},
 	}

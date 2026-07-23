@@ -49,13 +49,13 @@ environment provides an appropriate sandbox.
 bots:
   - name: local-test
     type: local
+    agents:
+      - agent: claude-engineering
+        when: notify
 
 agents:
   - name: claude-engineering
     driver: claude
-    bots:
-      - local-test
-    when: notify
     workdir: /workspace/project
     timeout: 900
     instructions: |

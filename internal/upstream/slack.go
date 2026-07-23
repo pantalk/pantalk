@@ -28,6 +28,8 @@ type SlackConnector struct {
 
 	mu            sync.RWMutex
 	channels      map[string]struct{}
+	channelIDs    map[string]string
+	channelNames  map[string]string
 	selfUser      string
 	selfBotID     string
 	receivedEvent bool
@@ -47,12 +49,14 @@ func NewSlackConnector(bot config.BotConfig, publish func(protocol.Event)) (*Sla
 	apiClient := slack.New(token, slack.OptionAppLevelToken(appToken))
 
 	connector := &SlackConnector{
-		serviceName: bot.Type,
-		botName:     bot.Name,
-		publish:     publish,
-		api:         apiClient,
-		socket:      socketmode.New(apiClient),
-		channels:    make(map[string]struct{}),
+		serviceName:  bot.Type,
+		botName:      bot.Name,
+		publish:      publish,
+		api:          apiClient,
+		socket:       socketmode.New(apiClient),
+		channels:     make(map[string]struct{}),
+		channelIDs:   make(map[string]string),
+		channelNames: make(map[string]string),
 	}
 
 	for _, channel := range bot.Channels {
@@ -165,6 +169,7 @@ func (s *SlackConnector) Send(ctx context.Context, request protocol.Request) (pr
 	if channel == "" {
 		return protocol.Event{}, fmt.Errorf("slack send requires channel or target")
 	}
+	channel = s.resolveChannelReference(ctx, channel)
 
 	s.rememberChannel(channel)
 
@@ -200,16 +205,17 @@ func (s *SlackConnector) Send(ctx context.Context, request protocol.Request) (pr
 		}
 
 		event := protocol.Event{
-			Timestamp: parseSlackTimestamp(postedTS),
-			Service:   s.serviceName,
-			Bot:       s.botName,
-			Kind:      "message",
-			Direction: "out",
-			User:      s.Identity(),
-			Target:    target,
-			Channel:   postedChannel,
-			Thread:    request.Thread,
-			Text:      segmentText,
+			Timestamp:   parseSlackTimestamp(postedTS),
+			Service:     s.serviceName,
+			Bot:         s.botName,
+			Kind:        "message",
+			Direction:   "out",
+			User:        s.Identity(),
+			Target:      target,
+			Channel:     postedChannel,
+			ChannelName: s.friendlyChannelName(postedChannel),
+			Thread:      request.Thread,
+			Text:        segmentText,
 		}
 
 		s.publish(event)
@@ -232,6 +238,7 @@ func (s *SlackConnector) React(ctx context.Context, request protocol.Request) er
 	if channel == "" {
 		return fmt.Errorf("slack react requires channel or target")
 	}
+	channel = s.resolveChannelReference(ctx, channel)
 
 	ts := request.Thread
 	if ts == "" {
@@ -307,16 +314,17 @@ func (s *SlackConnector) handleMessageEvent(message *slackevents.MessageEvent) {
 	}
 
 	event := protocol.Event{
-		Timestamp: parseSlackTimestamp(message.TimeStamp),
-		Service:   s.serviceName,
-		Bot:       s.botName,
-		Kind:      "message",
-		Direction: "in",
-		User:      message.User,
-		Target:    "channel:" + message.Channel,
-		Channel:   message.Channel,
-		Thread:    message.ThreadTimeStamp,
-		Text:      message.Text,
+		Timestamp:   parseSlackTimestamp(message.TimeStamp),
+		Service:     s.serviceName,
+		Bot:         s.botName,
+		Kind:        "message",
+		Direction:   "in",
+		User:        message.User,
+		Target:      "channel:" + message.Channel,
+		Channel:     message.Channel,
+		ChannelName: s.friendlyChannelName(message.Channel),
+		Thread:      message.ThreadTimeStamp,
+		Text:        message.Text,
 	}
 
 	s.publish(event)
@@ -345,16 +353,17 @@ func (s *SlackConnector) handleAppMentionEvent(mention *slackevents.AppMentionEv
 	}
 
 	event := protocol.Event{
-		Timestamp: parseSlackTimestamp(mention.TimeStamp),
-		Service:   s.serviceName,
-		Bot:       s.botName,
-		Kind:      "message",
-		Direction: "in",
-		User:      mention.User,
-		Target:    "channel:" + mention.Channel,
-		Channel:   mention.Channel,
-		Thread:    mention.ThreadTimeStamp,
-		Text:      mention.Text,
+		Timestamp:   parseSlackTimestamp(mention.TimeStamp),
+		Service:     s.serviceName,
+		Bot:         s.botName,
+		Kind:        "message",
+		Direction:   "in",
+		User:        mention.User,
+		Target:      "channel:" + mention.Channel,
+		Channel:     mention.Channel,
+		ChannelName: s.friendlyChannelName(mention.Channel),
+		Thread:      mention.ThreadTimeStamp,
+		Text:        mention.Text,
 	}
 
 	s.publish(event)
@@ -393,6 +402,12 @@ func (s *SlackConnector) acceptsChannel(channel string) bool {
 	defer s.mu.RUnlock()
 
 	if len(s.channels) == 0 {
+		return true
+	}
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(channel)), "D") {
+		return true
+	}
+	if _, all := s.channels["*"]; all {
 		return true
 	}
 
@@ -496,12 +511,28 @@ func (s *SlackConnector) resolveChannelNames(ctx context.Context) {
 	}
 	s.mu.RUnlock()
 
-	if len(toResolve) == 0 {
+	if err := s.refreshChannelDirectory(ctx); err != nil {
+		log.Printf("[slack:%s] channel resolution: failed to list conversations: %v", s.botName, err)
 		return
 	}
 
-	// Fetch all visible conversations to build a name→ID lookup.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, name := range toResolve {
+		cleaned := strings.TrimPrefix(name, "#")
+		if id, ok := s.channelIDs[cleaned]; ok {
+			delete(s.channels, name)
+			s.channels[id] = struct{}{}
+			log.Printf("[slack:%s] resolved channel %q → %s", s.botName, name, id)
+		} else {
+			log.Printf("[slack:%s] could not resolve channel %q – keeping as-is", s.botName, name)
+		}
+	}
+}
+
+func (s *SlackConnector) refreshChannelDirectory(ctx context.Context) error {
 	nameToID := make(map[string]string)
+	idToName := make(map[string]string)
 	cursor := ""
 	for {
 		params := &slack.GetConversationsParameters{
@@ -512,11 +543,11 @@ func (s *SlackConnector) resolveChannelNames(ctx context.Context) {
 		}
 		channels, nextCursor, err := s.api.GetConversationsContext(ctx, params)
 		if err != nil {
-			log.Printf("[slack:%s] channel resolution: failed to list conversations: %v", s.botName, err)
-			return
+			return err
 		}
 		for _, c := range channels {
 			nameToID[c.Name] = c.ID
+			idToName[c.ID] = "#" + c.Name
 		}
 		if nextCursor == "" {
 			break
@@ -525,17 +556,50 @@ func (s *SlackConnector) resolveChannelNames(ctx context.Context) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, name := range toResolve {
-		cleaned := strings.TrimPrefix(name, "#")
-		if id, ok := nameToID[cleaned]; ok {
-			delete(s.channels, name)
-			s.channels[id] = struct{}{}
-			log.Printf("[slack:%s] resolved channel %q → %s", s.botName, name, id)
-		} else {
-			log.Printf("[slack:%s] could not resolve channel %q – keeping as-is", s.botName, name)
-		}
+	s.channelIDs = nameToID
+	s.channelNames = idToName
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *SlackConnector) friendlyChannelName(channelID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.channelNames[channelID]
+}
+
+func (s *SlackConnector) resolveChannelReference(ctx context.Context, channel string) string {
+	if isSlackChannelID(channel) {
+		return channel
 	}
+
+	name := strings.TrimPrefix(strings.TrimSpace(channel), "#")
+	s.mu.RLock()
+	id := s.channelIDs[name]
+	s.mu.RUnlock()
+	if id != "" {
+		return id
+	}
+
+	if err := s.refreshChannelDirectory(ctx); err != nil {
+		log.Printf("[slack:%s] could not resolve outbound channel %q: %v", s.botName, channel, err)
+		return channel
+	}
+	s.mu.RLock()
+	id = s.channelIDs[name]
+	s.mu.RUnlock()
+	if id == "" {
+		return channel
+	}
+	return id
+}
+
+func (s *SlackConnector) ResolveChannel(ctx context.Context, channel string) (string, string, error) {
+	resolved := s.resolveChannelReference(ctx, channel)
+	if !isSlackChannelID(resolved) {
+		return "", "", fmt.Errorf("Slack channel %q could not be resolved", channel)
+	}
+	return resolved, s.friendlyChannelName(resolved), nil
 }
 
 // isSlackChannelID returns true when s looks like a Slack channel/group/DM

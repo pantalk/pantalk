@@ -89,7 +89,9 @@ CREATE TABLE IF NOT EXISTS events (
 	user TEXT NOT NULL DEFAULT '',
 	target TEXT,
 	channel TEXT,
+	channel_name TEXT,
 	thread TEXT,
+	schedule TEXT,
 	mentions_agent INTEGER NOT NULL DEFAULT 0,
 	direct_to_agent INTEGER NOT NULL DEFAULT 0,
 	notify INTEGER NOT NULL DEFAULT 0,
@@ -111,7 +113,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 	user TEXT NOT NULL DEFAULT '',
 	target TEXT,
 	channel TEXT,
+	channel_name TEXT,
 	thread TEXT,
+	schedule TEXT,
 	text TEXT NOT NULL,
 	mentions_agent INTEGER NOT NULL DEFAULT 0,
 	direct_to_agent INTEGER NOT NULL DEFAULT 0,
@@ -195,6 +199,10 @@ func (s *Store) migrateSchema() error {
 	}{
 		{"events", "attachments", `ALTER TABLE events ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`},
 		{"notifications", "attachments", `ALTER TABLE notifications ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`},
+		{"events", "channel_name", `ALTER TABLE events ADD COLUMN channel_name TEXT`},
+		{"notifications", "channel_name", `ALTER TABLE notifications ADD COLUMN channel_name TEXT`},
+		{"events", "schedule", `ALTER TABLE events ADD COLUMN schedule TEXT`},
+		{"notifications", "schedule", `ALTER TABLE notifications ADD COLUMN schedule TEXT`},
 	}
 
 	for _, migration := range migrations {
@@ -346,9 +354,9 @@ func (s *Store) InsertEvent(event protocol.Event) (int64, error) {
 	result, err := s.db.Exec(`
 INSERT INTO events (
 	timestamp_utc, service, bot, kind, direction, user,
-	target, channel, thread,
+	target, channel, channel_name, thread, schedule,
 	mentions_agent, direct_to_agent, notify, text, attachments
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
 		event.Service,
@@ -358,7 +366,9 @@ INSERT INTO events (
 		event.User,
 		event.Target,
 		event.Channel,
+		event.ChannelName,
 		event.Thread,
+		event.Schedule,
 		boolToInt(event.Mentions),
 		boolToInt(event.Direct),
 		boolToInt(event.Notify),
@@ -393,7 +403,9 @@ SELECT
 	user,
 	target,
 	channel,
+	channel_name,
 	thread,
+	schedule,
 	mentions_agent,
 	direct_to_agent,
 	notify,
@@ -476,9 +488,9 @@ func (s *Store) InsertNotification(event protocol.Event) (int64, error) {
 	result, err := s.db.Exec(`
 INSERT INTO notifications (
 	event_id, timestamp_utc, service, bot, kind, direction, user,
-	target, channel, thread, text,
+	target, channel, channel_name, thread, schedule, text,
 	mentions_agent, direct_to_agent, notify, seen, attachments
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
 `,
 		event.ID,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -489,7 +501,9 @@ INSERT INTO notifications (
 		event.User,
 		event.Target,
 		event.Channel,
+		event.ChannelName,
 		event.Thread,
+		event.Schedule,
 		event.Text,
 		boolToInt(event.Mentions),
 		boolToInt(event.Direct),
@@ -525,7 +539,9 @@ SELECT
 	user,
 	target,
 	channel,
+	channel_name,
 	thread,
+	schedule,
 	text,
 	mentions_agent,
 	direct_to_agent,
@@ -825,7 +841,9 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		user           string
 		target         sql.NullString
 		channel        sql.NullString
+		channelName    sql.NullString
 		thread         sql.NullString
+		schedule       sql.NullString
 		text           string
 		mentions       int
 		direct         int
@@ -846,7 +864,9 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		&user,
 		&target,
 		&channel,
+		&channelName,
 		&thread,
+		&schedule,
 		&text,
 		&mentions,
 		&direct,
@@ -881,7 +901,9 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		User:           user,
 		Target:         target.String,
 		Channel:        channel.String,
+		ChannelName:    channelName.String,
 		Thread:         thread.String,
+		Schedule:       schedule.String,
 		NotificationID: notificationID,
 		Seen:           seen == 1,
 		SeenAt:         seenAt,
@@ -904,7 +926,9 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		user           string
 		target         sql.NullString
 		channel        sql.NullString
+		channelName    sql.NullString
 		thread         sql.NullString
+		schedule       sql.NullString
 		mentions       int
 		direct         int
 		notify         int
@@ -922,7 +946,9 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		&user,
 		&target,
 		&channel,
+		&channelName,
 		&thread,
+		&schedule,
 		&mentions,
 		&direct,
 		&notify,
@@ -947,7 +973,9 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		User:        user,
 		Target:      target.String,
 		Channel:     channel.String,
+		ChannelName: channelName.String,
 		Thread:      thread.String,
+		Schedule:    schedule.String,
 		Mentions:    mentions == 1,
 		Direct:      direct == 1,
 		Notify:      notify == 1,

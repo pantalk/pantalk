@@ -19,6 +19,8 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/slack-go/slack/slackevents"
+
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/protocol"
 )
@@ -834,6 +836,64 @@ func TestIsSlackChannelID(t *testing.T) {
 	}
 }
 
+func TestSlackChannelFilteringAlwaysAllowsDirectMessages(t *testing.T) {
+	connector := &SlackConnector{
+		channels: map[string]struct{}{"C0123456789": {}},
+	}
+	if !connector.acceptsChannel("D0123456789") {
+		t.Fatal("expected Slack direct message to bypass public channel allowlist")
+	}
+	if connector.acceptsChannel("C9999999999") {
+		t.Fatal("unexpected public channel allowlist match")
+	}
+
+	connector.channels["*"] = struct{}{}
+	if !connector.acceptsChannel("C9999999999") {
+		t.Fatal("expected wildcard to accept public channel")
+	}
+}
+
+func TestSlackMessageIncludesFriendlyChannelName(t *testing.T) {
+	var published protocol.Event
+	connector := &SlackConnector{
+		serviceName:  "slack",
+		botName:      "test",
+		channels:     map[string]struct{}{"C0123456789": {}},
+		channelNames: map[string]string{"C0123456789": "#engineering"},
+		publish: func(event protocol.Event) {
+			published = event
+		},
+	}
+
+	connector.handleMessageEvent(&slackevents.MessageEvent{
+		TimeStamp: "1720000000.000000",
+		Channel:   "C0123456789",
+		User:      "U0123456789",
+		Text:      "hello",
+	})
+
+	if published.Channel != "C0123456789" || published.ChannelName != "#engineering" {
+		t.Fatalf("unexpected Slack channel identity: %+v", published)
+	}
+}
+
+func TestSlackResolveChannelAcceptsRawIDOrFriendlyName(t *testing.T) {
+	connector := &SlackConnector{
+		channelIDs:   map[string]string{"engineering": "C0123456789"},
+		channelNames: map[string]string{"C0123456789": "#engineering"},
+	}
+
+	for _, selector := range []string{"#engineering", "engineering", "C0123456789"} {
+		id, name, err := connector.ResolveChannel(context.Background(), selector)
+		if err != nil {
+			t.Fatalf("resolve %q: %v", selector, err)
+		}
+		if id != "C0123456789" || name != "#engineering" {
+			t.Fatalf("resolve %q returned id=%q name=%q", selector, id, name)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // isDiscordChannelID tests
 // ---------------------------------------------------------------------------
@@ -1406,7 +1466,7 @@ func TestIMessageHandleIncomingMessage(t *testing.T) {
 		}
 	})
 
-	t.Run("filtered by channel allowlist", func(t *testing.T) {
+	t.Run("group filtered by channel allowlist", func(t *testing.T) {
 		filtered := &IMessageConnector{
 			serviceName: "imessage",
 			botName:     "test",
@@ -1429,7 +1489,8 @@ func TestIMessageHandleIncomingMessage(t *testing.T) {
 			Date:     700000003000000000,
 			IsFromMe: 0,
 			HandleID: "+15551234567",
-			ChatID:   "+15551234567",
+			ChatID:   "chat123456789",
+			RoomName: "group-room",
 		})
 
 		mu.Lock()

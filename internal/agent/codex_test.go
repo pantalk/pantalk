@@ -103,7 +103,6 @@ func TestCodexRuntimeStartsThreadRunsTurnAndReplies(t *testing.T) {
 
 	runtime, err := NewCodexRuntime(context.Background(), CodexRuntimeConfig{
 		Name:         "engineering",
-		Bots:         []string{"local-test"},
 		Workdir:      "/workspace/project",
 		Instructions: "Be helpful.",
 		Timeout:      time.Second,
@@ -130,9 +129,6 @@ func TestCodexRuntimeStartsThreadRunsTurnAndReplies(t *testing.T) {
 		Direct:    true,
 		Notify:    true,
 		Text:      "hello",
-	}
-	if !runtime.Matches(event) {
-		t.Fatal("expected direct event on selected bot to match")
 	}
 	runtime.Handle(event)
 
@@ -190,7 +186,6 @@ func TestCodexRuntimeResumesPersistedThread(t *testing.T) {
 	replied := make(chan struct{}, 1)
 	runtime, err := NewCodexRuntime(context.Background(), CodexRuntimeConfig{
 		Name: "engineering",
-		Bots: []string{"engineering-slack"},
 	}, client, sessions, func(context.Context, protocol.Event, string) error {
 		replied <- struct{}{}
 		return nil
@@ -247,7 +242,6 @@ func TestCodexRuntimeReplacesUnresumableThread(t *testing.T) {
 	replied := make(chan struct{}, 1)
 	runtime, err := NewCodexRuntime(context.Background(), CodexRuntimeConfig{
 		Name: "engineering",
-		Bots: []string{"local-test"},
 	}, client, sessions, func(context.Context, protocol.Event, string) error {
 		replied <- struct{}{}
 		return nil

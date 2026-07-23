@@ -20,6 +20,14 @@ bots:
   # pipeline without provider credentials or network access.
   - name: local-test
     type: local
+    # agents:
+    #   - agent: engineering-assistant
+    #     when: true
+    #   - name: morning-review
+    #     agent: engineering-assistant
+    #     when: 'at("09:00") && weekday in ["mon","tue","wed","thu","fri"]'
+    #     timezone: Europe/London
+    #     prompt: Review the repository and summarize today's priorities.
 
   - name: ops-bot
     type: slack
@@ -27,6 +35,14 @@ bots:
     app_level_token: $SLACK_APP_LEVEL_TOKEN_OPS
     channels:
       - '#ops' # friendly name (resolved to channel ID at startup)
+    # Bindings are ordered. The first matching message binding wins.
+    # agents:
+    #   - agent: claude-engineering
+    #     when: 'channel == "#code-review"'
+    #   - agent: engineering-assistant
+    #     when: direct
+    #   - agent: engineering-assistant
+    #     when: true
 
   - name: eng-bot
     type: slack
@@ -100,18 +116,14 @@ bots:
 
 # ---
 
-# Agents are configured separately from messaging bots and select their
-# connections through the "bots" list. The native Codex driver owns one
-# persistent app-server process and derives a durable Codex thread per
+# Top-level agents define how a reusable runtime starts. Each bot's ordered
+# "agents" list defines when that bot uses the runtime. The native Codex driver
+# owns one persistent app-server process and derives a durable Codex thread per
 # integration conversation.
 #
 # agents:
 #   - name: engineering-assistant         # user-chosen agent identifier
 #     driver: codex                       # starts: codex app-server --stdio
-#     bots:
-#       - local-test                      # names from the bots section above
-#       - ops-bot
-#     when: notify                        # optional; this is the default
 #     workdir: /home/user/project         # repository Codex works in
 #     timeout: 900                        # maximum seconds per turn
 #     instructions: |
@@ -126,10 +138,6 @@ bots:
 #
 #   - name: claude-engineering           # reuses local Claude Code auth/config
 #     driver: claude
-#     bots:
-#       - local-test
-#       - ops-bot
-#     when: notify
 #     workdir: /home/user/project
 #     timeout: 900
 #     instructions: |
@@ -145,35 +153,13 @@ bots:
 #
 # Command agents retain the original fire-and-forget CLI behavior. Only known
 # agent binaries (claude, codex, aider, goose, etc.) are permitted unless
-# pantalkd is started with --allow-exec. The "when" field uses an expression
-# language with event fields such as notify, direct, mentions, channel, thread,
-# bot, service, user, and text. Time triggers use at() and every().
+# pantalkd is started with --allow-exec. Bind command definitions from a bot's
+# "agents" list in the same way as native agents.
 #
 #   - name: responder                     # identifier for logging
 #     driver: command                     # optional when command is present
-#     bots: [ops-bot]                     # optional for command agents
-#     when: "direct || mentions"           # expression (default: "notify")
 #     command: claude -p "Check pantalk notifications and respond"
 #     workdir: /home/user/project          # optional working directory
 #     buffer: 30                           # seconds to batch before launching
 #     timeout: 120                         # kill after N seconds
 #     cooldown: 60                         # min gap between runs
-#
-#   - name: incident-watcher
-#     when: "notify && channel == '#incidents'"
-#     command: claude -p "Triage the incident"
-#     workdir: /home/user/ops
-#     buffer: 10
-#     timeout: 300
-#     cooldown: 120
-#
-#   - name: morning-digest
-#     when: 'at("9:00") && weekday in ["mon","tue","wed","thu","fri"]'
-#     command: claude -p "Summarize overnight notifications"
-#     workdir: /home/user/project
-#     timeout: 300
-#
-#   - name: periodic-check
-#     when: 'every("30m") || direct'
-#     command: claude -p "Check notifications and respond"
-#     workdir: /home/user/project

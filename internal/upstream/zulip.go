@@ -235,7 +235,8 @@ func (z *ZulipConnector) pollEvents(ctx context.Context, queueID string, lastEve
 			}
 
 			channelID := z.extractChannel(msg)
-			if !z.acceptsChannel(channelID) {
+			direct := msg.Type == "private"
+			if !direct && !z.acceptsChannel(channelID) {
 				continue
 			}
 
@@ -254,6 +255,7 @@ func (z *ZulipConnector) pollEvents(ctx context.Context, queueID string, lastEve
 				Target:    "channel:" + channelID,
 				Channel:   channelID,
 				Thread:    msg.Subject,
+				Direct:    direct,
 				Text:      text,
 			})
 		}

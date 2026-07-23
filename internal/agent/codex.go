@@ -37,8 +37,6 @@ type ReplyFunc func(context.Context, protocol.Event, string) error
 // CodexRuntimeConfig configures one persistent Codex app-server agent.
 type CodexRuntimeConfig struct {
 	Name         string
-	When         string
-	Bots         []string
 	Workdir      string
 	Instructions string
 	Timeout      time.Duration
@@ -54,7 +52,6 @@ type CodexRuntimeConfig struct {
 // may run concurrently through the same managed app-server process.
 type CodexRuntime struct {
 	cfg      CodexRuntimeConfig
-	matcher  *Matcher
 	client   CodexClient
 	sessions SessionStore
 	reply    ReplyFunc
@@ -93,10 +90,6 @@ func NewCodexRuntime(
 		return nil, fmt.Errorf("agent %q: reply callback is required", cfg.Name)
 	}
 
-	matcher, err := NewMatcher(cfg.Name, cfg.When, cfg.Bots)
-	if err != nil {
-		return nil, err
-	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 120 * time.Second
 	}
@@ -107,7 +100,6 @@ func NewCodexRuntime(
 	ctx, cancel := context.WithCancel(parent)
 	return &CodexRuntime{
 		cfg:      cfg,
-		matcher:  matcher,
 		client:   client,
 		sessions: sessions,
 		reply:    reply,
@@ -119,16 +111,6 @@ func NewCodexRuntime(
 }
 
 func (r *CodexRuntime) Name() string { return r.cfg.Name }
-
-func (r *CodexRuntime) When() string { return r.matcher.When() }
-
-func (r *CodexRuntime) Matches(event protocol.Event) bool {
-	return r.matcher.Matches(event)
-}
-
-func (r *CodexRuntime) NeedsTick() bool {
-	return r.matcher.NeedsTick()
-}
 
 // Handle queues a matching event without blocking the provider receive loop.
 func (r *CodexRuntime) Handle(event protocol.Event) {
