@@ -8,6 +8,7 @@ const (
 	ActionStatus       = "status"
 	ActionSend         = "send"
 	ActionReact        = "react"
+	ActionTyping       = "typing"
 	ActionHistory      = "history"
 	ActionNotify       = "notifications"
 	ActionClearHistory = "clear_history"
@@ -32,6 +33,40 @@ type Request struct {
 	All     bool   `json:"all,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
 	SinceID int64  `json:"since_id,omitempty"`
+	// Attach holds local filesystem paths to upload alongside the message.
+	Attach []string `json:"attach,omitempty"`
+	// Stop ends an active typing lease instead of starting one.
+	Stop bool `json:"stop,omitempty"`
+}
+
+// Attachment describes a file carried by a message. When media storage is
+// disabled only the descriptive fields and RemoteID are populated, so history
+// still records that a file was present.
+type Attachment struct {
+	Name string `json:"name,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Size int64  `json:"size,omitempty"`
+
+	// Key identifies the bytes inside the configured media store and is the
+	// durable locator: it survives the storage root moving and carries no
+	// assumption about which backend holds the file. Empty when the bytes
+	// were never stored.
+	Key string `json:"key,omitempty"`
+
+	// Digest is the SHA-256 of the stored bytes, for integrity checks and
+	// deduplication. The filesystem backend also uses it as its Key.
+	Digest string `json:"digest,omitempty"`
+
+	// Path is the local filesystem location of the bytes. It is DERIVED from
+	// Key by the running daemon and deliberately never persisted - storing it
+	// would freeze both the backend and the storage root that happened to be
+	// configured at write time. Empty when the backend cannot expose a local
+	// path.
+	Path string `json:"path,omitempty"`
+
+	// RemoteID is the upstream platform's own handle for the file (for
+	// example a Telegram file_id), retained so it can be re-fetched.
+	RemoteID string `json:"remote_id,omitempty"`
 }
 
 type Response struct {
@@ -83,22 +118,23 @@ type BotRef struct {
 }
 
 type Event struct {
-	ID             int64      `json:"id"`
-	Timestamp      time.Time  `json:"timestamp"`
-	Service        string     `json:"service"`
-	Bot            string     `json:"bot"`
-	Kind           string     `json:"kind"`
-	Direction      string     `json:"direction"`
-	User           string     `json:"user,omitempty"`
-	Self           bool       `json:"self,omitempty"`
-	Target         string     `json:"target,omitempty"`
-	Channel        string     `json:"channel,omitempty"`
-	Thread         string     `json:"thread,omitempty"`
-	NotificationID int64      `json:"notification_id,omitempty"`
-	Seen           bool       `json:"seen,omitempty"`
-	SeenAt         *time.Time `json:"seen_at,omitempty"`
-	Mentions       bool       `json:"mentions_agent,omitempty"`
-	Direct         bool       `json:"direct_to_agent,omitempty"`
-	Notify         bool       `json:"notify,omitempty"`
-	Text           string     `json:"text"`
+	ID             int64        `json:"id"`
+	Timestamp      time.Time    `json:"timestamp"`
+	Service        string       `json:"service"`
+	Bot            string       `json:"bot"`
+	Kind           string       `json:"kind"`
+	Direction      string       `json:"direction"`
+	User           string       `json:"user,omitempty"`
+	Self           bool         `json:"self,omitempty"`
+	Target         string       `json:"target,omitempty"`
+	Channel        string       `json:"channel,omitempty"`
+	Thread         string       `json:"thread,omitempty"`
+	NotificationID int64        `json:"notification_id,omitempty"`
+	Seen           bool         `json:"seen,omitempty"`
+	SeenAt         *time.Time   `json:"seen_at,omitempty"`
+	Mentions       bool         `json:"mentions_agent,omitempty"`
+	Direct         bool         `json:"direct_to_agent,omitempty"`
+	Notify         bool         `json:"notify,omitempty"`
+	Text           string       `json:"text"`
+	Attachments    []Attachment `json:"attachments,omitempty"`
 }

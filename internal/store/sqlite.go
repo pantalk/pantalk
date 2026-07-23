@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/pantalk/pantalk/internal/protocol"
 )
@@ -55,7 +56,7 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
 	}
@@ -92,7 +93,8 @@ CREATE TABLE IF NOT EXISTS events (
 	mentions_agent INTEGER NOT NULL DEFAULT 0,
 	direct_to_agent INTEGER NOT NULL DEFAULT 0,
 	notify INTEGER NOT NULL DEFAULT 0,
-	text TEXT NOT NULL
+	text TEXT NOT NULL,
+	attachments TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_scope ON events(service, bot, id);
@@ -115,7 +117,8 @@ CREATE TABLE IF NOT EXISTS notifications (
 	direct_to_agent INTEGER NOT NULL DEFAULT 0,
 	notify INTEGER NOT NULL DEFAULT 1,
 	seen INTEGER NOT NULL DEFAULT 0,
-	seen_at TEXT
+	seen_at TEXT,
+	attachments TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications(service, bot, id);
@@ -125,7 +128,137 @@ CREATE INDEX IF NOT EXISTS idx_notifications_seen ON notifications(service, bot,
 		return fmt.Errorf("init sqlite schema: %w", err)
 	}
 
+	return s.migrateSchema()
+}
+
+// migrateSchema applies additive column migrations to databases created by
+// earlier versions. CREATE TABLE IF NOT EXISTS leaves an existing table
+// untouched, so a column added to the DDL above never reaches a database that
+// already exists - it has to be added explicitly here.
+func (s *Store) migrateSchema() error {
+	migrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"events", "attachments", `ALTER TABLE events ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`},
+		{"notifications", "attachments", `ALTER TABLE notifications ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`},
+	}
+
+	for _, migration := range migrations {
+		exists, err := s.hasColumn(migration.table, migration.column)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+
+		if _, err := s.db.Exec(migration.ddl); err != nil {
+			return fmt.Errorf("migrate %s.%s: %w", migration.table, migration.column, err)
+		}
+	}
+
 	return nil
+}
+
+func (s *Store) hasColumn(table string, column string) (bool, error) {
+	rows, err := s.db.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+
+	found := rows.Next()
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+
+	return found, nil
+}
+
+// encodeAttachments serializes attachments for storage. It always produces
+// valid JSON so the column can be decoded unconditionally on read.
+//
+// Path is stripped before writing: it is a rendering of Key under whichever
+// backend and storage root were configured at the time, so persisting it would
+// leave every historical row pointing at a location that a later config change
+// invalidates. Key is the durable locator; Path is recomputed on read.
+func encodeAttachments(attachments []protocol.Attachment) string {
+	if len(attachments) == 0 {
+		return "[]"
+	}
+
+	persisted := make([]protocol.Attachment, len(attachments))
+	for i, attachment := range attachments {
+		attachment.Path = ""
+		persisted[i] = attachment
+	}
+
+	encoded, err := json.Marshal(persisted)
+	if err != nil {
+		return "[]"
+	}
+
+	return string(encoded)
+}
+
+// decodeAttachments parses the attachments column. Malformed or legacy values
+// degrade to no attachments rather than failing the whole query - a damaged
+// metadata blob should not make message history unreadable.
+func decodeAttachments(raw sql.NullString) []protocol.Attachment {
+	value := strings.TrimSpace(raw.String)
+	if !raw.Valid || value == "" || value == "[]" {
+		return nil
+	}
+
+	var attachments []protocol.Attachment
+	if err := json.Unmarshal([]byte(value), &attachments); err != nil {
+		return nil
+	}
+
+	return attachments
+}
+
+// ReferencedAttachmentKeys returns every attachment storage key still reachable
+// from stored history, across both events and notifications.
+//
+// Content addressing means one key can back many rows, so this is a set union
+// rather than a per-row list: a key survives as long as any single row still
+// mentions it. Rows with no attachments are skipped in SQL so the scan stays
+// proportional to attachment-bearing history rather than all history.
+func (s *Store) ReferencedAttachmentKeys() (map[string]struct{}, error) {
+	referenced := make(map[string]struct{})
+
+	for _, table := range []string{"events", "notifications"} {
+		// #nosec G202 - table is from a fixed local list, never user input.
+		rows, err := s.db.Query(`SELECT attachments FROM ` + table + ` WHERE attachments IS NOT NULL AND attachments != '[]' AND attachments != ''`)
+		if err != nil {
+			return nil, fmt.Errorf("scan %s attachments: %w", table, err)
+		}
+
+		for rows.Next() {
+			var raw sql.NullString
+			if err := rows.Scan(&raw); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan %s attachment row: %w", table, err)
+			}
+
+			for _, attachment := range decodeAttachments(raw) {
+				if key := strings.TrimSpace(attachment.Key); key != "" {
+					referenced[key] = struct{}{}
+				}
+			}
+		}
+
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan %s attachments: %w", table, err)
+		}
+		rows.Close()
+	}
+
+	return referenced, nil
 }
 
 // LookupChannelByThread returns the channel associated with a thread timestamp.
@@ -162,8 +295,8 @@ func (s *Store) InsertEvent(event protocol.Event) (int64, error) {
 INSERT INTO events (
 	timestamp_utc, service, bot, kind, direction, user,
 	target, channel, thread,
-	mentions_agent, direct_to_agent, notify, text
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	mentions_agent, direct_to_agent, notify, text, attachments
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
 		event.Service,
@@ -178,6 +311,7 @@ INSERT INTO events (
 		boolToInt(event.Direct),
 		boolToInt(event.Notify),
 		event.Text,
+		encodeAttachments(event.Attachments),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert event: %w", err)
@@ -211,7 +345,8 @@ SELECT
 	mentions_agent,
 	direct_to_agent,
 	notify,
-	text
+	text,
+	attachments
 FROM events`
 
 	where := make([]string, 0, 8)
@@ -290,8 +425,8 @@ func (s *Store) InsertNotification(event protocol.Event) (int64, error) {
 INSERT INTO notifications (
 	event_id, timestamp_utc, service, bot, kind, direction, user,
 	target, channel, thread, text,
-	mentions_agent, direct_to_agent, notify, seen
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+	mentions_agent, direct_to_agent, notify, seen, attachments
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
 `,
 		event.ID,
 		event.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -307,6 +442,7 @@ INSERT INTO notifications (
 		boolToInt(event.Mentions),
 		boolToInt(event.Direct),
 		boolToInt(event.Notify),
+		encodeAttachments(event.Attachments),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert notification: %w", err)
@@ -343,7 +479,8 @@ SELECT
 	direct_to_agent,
 	notify,
 	seen,
-	seen_at
+	seen_at,
+	attachments
 FROM notifications`
 
 	where := make([]string, 0, 8)
@@ -643,6 +780,7 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		notify         int
 		seen           int
 		seenAtRaw      sql.NullString
+		attachmentsRaw sql.NullString
 	)
 
 	if err := rows.Scan(
@@ -663,6 +801,7 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		&notify,
 		&seen,
 		&seenAtRaw,
+		&attachmentsRaw,
 	); err != nil {
 		return protocol.Event{}, fmt.Errorf("scan notification row: %w", err)
 	}
@@ -698,25 +837,27 @@ func scanEvent(rows *sql.Rows) (protocol.Event, error) {
 		Direct:         direct == 1,
 		Notify:         notify == 1,
 		Text:           text,
+		Attachments:    decodeAttachments(attachmentsRaw),
 	}, nil
 }
 
 func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 	var (
-		eventID      int64
-		timestampRaw string
-		service      string
-		bot          string
-		kind         string
-		direction    string
-		user         string
-		target       sql.NullString
-		channel      sql.NullString
-		thread       sql.NullString
-		mentions     int
-		direct       int
-		notify       int
-		text         string
+		eventID        int64
+		timestampRaw   string
+		service        string
+		bot            string
+		kind           string
+		direction      string
+		user           string
+		target         sql.NullString
+		channel        sql.NullString
+		thread         sql.NullString
+		mentions       int
+		direct         int
+		notify         int
+		text           string
+		attachmentsRaw sql.NullString
 	)
 
 	if err := rows.Scan(
@@ -734,6 +875,7 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 		&direct,
 		&notify,
 		&text,
+		&attachmentsRaw,
 	); err != nil {
 		return protocol.Event{}, fmt.Errorf("scan event row: %w", err)
 	}
@@ -744,20 +886,21 @@ func scanStoredEvent(rows *sql.Rows) (protocol.Event, error) {
 	}
 
 	return protocol.Event{
-		ID:        eventID,
-		Timestamp: timestamp,
-		Service:   service,
-		Bot:       bot,
-		Kind:      kind,
-		Direction: direction,
-		User:      user,
-		Target:    target.String,
-		Channel:   channel.String,
-		Thread:    thread.String,
-		Mentions:  mentions == 1,
-		Direct:    direct == 1,
-		Notify:    notify == 1,
-		Text:      text,
+		ID:          eventID,
+		Timestamp:   timestamp,
+		Service:     service,
+		Bot:         bot,
+		Kind:        kind,
+		Direction:   direction,
+		User:        user,
+		Target:      target.String,
+		Channel:     channel.String,
+		Thread:      thread.String,
+		Mentions:    mentions == 1,
+		Direct:      direct == 1,
+		Notify:      notify == 1,
+		Text:        text,
+		Attachments: decodeAttachments(attachmentsRaw),
 	}, nil
 }
 

@@ -21,9 +21,41 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	SocketPath  string `yaml:"socket_path"`
-	HistorySize int    `yaml:"notification_history_size"`
-	DBPath      string `yaml:"db_path"`
+	SocketPath  string      `yaml:"socket_path"`
+	HistorySize int         `yaml:"notification_history_size"`
+	DBPath      string      `yaml:"db_path"`
+	Media       MediaConfig `yaml:"media"`
+}
+
+// Media backend identifiers.
+const (
+	// MediaBackendFS keeps attachments on the local filesystem.
+	MediaBackendFS = "fs"
+	// MediaBackendNone disables attachment storage entirely. Inbound
+	// attachments are still reported as metadata, but no bytes are fetched.
+	MediaBackendNone = "none"
+)
+
+// defaultMediaMaxBytes caps a single stored attachment at 20 MiB, which sits
+// just above Telegram's 20 MB Bot API download limit.
+const defaultMediaMaxBytes int64 = 20 << 20
+
+// MediaConfig controls where inbound attachments are stored and how large they
+// may be. The backend is deliberately pluggable - `fs` is the only
+// implementation today, but the indirection means object storage can be added
+// without changing the config surface users already wrote.
+type MediaConfig struct {
+	Backend  string `yaml:"backend"`   // "fs" (default) or "none" to disable downloads
+	Path     string `yaml:"path"`      // storage root, fs backend only
+	MaxBytes int64  `yaml:"max_bytes"` // per-file cap in bytes (0 = default 20 MiB)
+
+	// AttachRoots lists the directories outbound attachments may be read
+	// from. Send requests referencing files outside every root are refused.
+	// Empty means outbound attachments are disabled entirely - the daemon
+	// auto-launches agents, and an allowlist-by-default posture (mirroring
+	// the agent command allowlist) keeps a prompt-injected agent from
+	// attaching arbitrary readable files like ~/.ssh/id_ed25519.
+	AttachRoots []string `yaml:"attach_roots"`
 }
 
 type BotConfig struct {
@@ -123,11 +155,45 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.DBPath == "" {
 		cfg.Server.DBPath = DefaultDBPath()
 	}
+
+	if strings.TrimSpace(cfg.Server.Media.Backend) == "" {
+		cfg.Server.Media.Backend = MediaBackendFS
+	}
+
+	if cfg.Server.Media.Path == "" {
+		cfg.Server.Media.Path = DefaultMediaPath()
+	}
+
+	if cfg.Server.Media.MaxBytes <= 0 {
+		cfg.Server.Media.MaxBytes = defaultMediaMaxBytes
+	}
+
+	// Drop blank attach roots so downstream policy checks can treat every
+	// entry as meaningful.
+	if len(cfg.Server.Media.AttachRoots) > 0 {
+		roots := cfg.Server.Media.AttachRoots[:0]
+		for _, root := range cfg.Server.Media.AttachRoots {
+			if trimmed := strings.TrimSpace(root); trimmed != "" {
+				roots = append(roots, trimmed)
+			}
+		}
+		cfg.Server.Media.AttachRoots = roots
+	}
 }
 
 func validate(cfg Config, allowExec bool) error {
 	if len(cfg.Bots) == 0 {
 		return errors.New("config must include at least one bot")
+	}
+
+	switch cfg.Server.Media.Backend {
+	case MediaBackendFS:
+		if strings.TrimSpace(cfg.Server.Media.Path) == "" {
+			return errors.New("server.media.path cannot be empty for the fs backend")
+		}
+	case MediaBackendNone:
+	default:
+		return fmt.Errorf("server.media.backend %q is not supported (use %q or %q)", cfg.Server.Media.Backend, MediaBackendFS, MediaBackendNone)
 	}
 
 	seenBots := map[string]struct{}{}

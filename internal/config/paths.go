@@ -42,6 +42,15 @@ func DefaultDBPath() string {
 	return filepath.Join(xdgDataHome(), "pantalk", "pantalk.db")
 }
 
+// DefaultMediaPath returns the resolved attachment storage root using a
+// fallback chain:
+//
+//  1. $XDG_DATA_HOME/pantalk/media (if XDG_DATA_HOME is set)
+//  2. ~/.local/share/pantalk/media
+func DefaultMediaPath() string {
+	return filepath.Join(xdgDataHome(), "pantalk", "media")
+}
+
 // DefaultSkillsCachePath returns the resolved cache directory for the skills
 // repository clone using a fallback chain:
 //

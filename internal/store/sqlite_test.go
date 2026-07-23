@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1195,5 +1197,403 @@ func TestNotificationStats(t *testing.T) {
 	}
 	if stats.Unseen != 1 {
 		t.Fatalf("expected unseen=1, got %d", stats.Unseen)
+	}
+}
+
+func TestAttachmentsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+
+	ev := makeEvent("telegram", "bot-a", "see attached", "in")
+	ev.Attachments = []protocol.Attachment{
+		{Name: "photo.jpg", MIME: "image/jpeg", Size: 2048, Digest: "abc123", Path: "/tmp/ab/abc123.jpg", RemoteID: "AgACAgQ"},
+		{Name: "notes.pdf", MIME: "application/pdf", Size: 90},
+	}
+
+	if _, err := s.InsertEvent(ev); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	events, err := s.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+
+	got := events[0].Attachments
+	if len(got) != 2 {
+		t.Fatalf("got %d attachments, want 2", len(got))
+	}
+	if got[0].Name != "photo.jpg" || got[0].Digest != "abc123" || got[0].Size != 2048 {
+		t.Fatalf("first attachment round-tripped as %+v", got[0])
+	}
+	if got[0].RemoteID != "AgACAgQ" {
+		t.Fatalf("remote id = %q, want %q", got[0].RemoteID, "AgACAgQ")
+	}
+	if got[1].Name != "notes.pdf" || got[1].MIME != "application/pdf" {
+		t.Fatalf("second attachment round-tripped as %+v", got[1])
+	}
+}
+
+func TestAttachmentsRoundTripThroughNotifications(t *testing.T) {
+	s := openTestStore(t)
+
+	ev := makeEvent("telegram", "bot-a", "ping with file", "in")
+	ev.Notify = true
+	ev.Attachments = []protocol.Attachment{{Name: "voice.ogg", MIME: "audio/ogg", Size: 12}}
+
+	if _, err := s.InsertNotification(ev); err != nil {
+		t.Fatalf("insert notification: %v", err)
+	}
+
+	notifications, err := s.ListNotifications(NotificationFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list notifications: %v", err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("got %d notifications, want 1", len(notifications))
+	}
+	if len(notifications[0].Attachments) != 1 {
+		t.Fatalf("got %d attachments, want 1", len(notifications[0].Attachments))
+	}
+	if notifications[0].Attachments[0].Name != "voice.ogg" {
+		t.Fatalf("attachment = %+v", notifications[0].Attachments[0])
+	}
+}
+
+func TestEventWithoutAttachmentsStaysNil(t *testing.T) {
+	s := openTestStore(t)
+
+	if _, err := s.InsertEvent(makeEvent("slack", "bot-a", "plain text", "in")); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	events, err := s.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events[0].Attachments) != 0 {
+		t.Fatalf("expected no attachments, got %+v", events[0].Attachments)
+	}
+}
+
+// A database created before attachments existed must gain the column on open,
+// keep its existing rows readable, and accept new attachment-bearing writes.
+func TestMigrationAddsAttachmentsToLegacyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+
+	if _, err := legacy.Exec(`
+CREATE TABLE events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp_utc TEXT NOT NULL,
+	service TEXT NOT NULL,
+	bot TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	direction TEXT NOT NULL,
+	user TEXT NOT NULL DEFAULT '',
+	target TEXT,
+	channel TEXT,
+	thread TEXT,
+	mentions_agent INTEGER NOT NULL DEFAULT 0,
+	direct_to_agent INTEGER NOT NULL DEFAULT 0,
+	notify INTEGER NOT NULL DEFAULT 0,
+	text TEXT NOT NULL
+);
+
+CREATE TABLE notifications (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id INTEGER NOT NULL,
+	timestamp_utc TEXT NOT NULL,
+	service TEXT NOT NULL,
+	bot TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	direction TEXT NOT NULL,
+	user TEXT NOT NULL DEFAULT '',
+	target TEXT,
+	channel TEXT,
+	thread TEXT,
+	text TEXT NOT NULL,
+	mentions_agent INTEGER NOT NULL DEFAULT 0,
+	direct_to_agent INTEGER NOT NULL DEFAULT 0,
+	notify INTEGER NOT NULL DEFAULT 1,
+	seen INTEGER NOT NULL DEFAULT 0,
+	seen_at TEXT
+);
+`); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+
+	if _, err := legacy.Exec(`
+INSERT INTO events (timestamp_utc, service, bot, kind, direction, user, target, channel, thread, text)
+VALUES (?, 'slack', 'bot-a', 'message', 'in', 'U1', 'channel:C1', 'C1', '', 'legacy row')
+`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	// Opening through the store must migrate rather than fail.
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer s.Close()
+
+	events, err := s.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list events after migration: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Text != "legacy row" {
+		t.Fatalf("legacy text = %q, want %q", events[0].Text, "legacy row")
+	}
+	if len(events[0].Attachments) != 0 {
+		t.Fatalf("legacy row gained attachments: %+v", events[0].Attachments)
+	}
+
+	// New writes with attachments must work against the migrated schema.
+	fresh := makeEvent("telegram", "bot-b", "after migration", "in")
+	fresh.Attachments = []protocol.Attachment{{Name: "new.png", MIME: "image/png", Size: 5}}
+	if _, err := s.InsertEvent(fresh); err != nil {
+		t.Fatalf("insert after migration: %v", err)
+	}
+
+	fresh.Notify = true
+	if _, err := s.InsertNotification(fresh); err != nil {
+		t.Fatalf("insert notification after migration: %v", err)
+	}
+
+	events, err = s.ListEvents(EventFilter{Bot: "bot-b", Limit: 10})
+	if err != nil {
+		t.Fatalf("list migrated events: %v", err)
+	}
+	if len(events) != 1 || len(events[0].Attachments) != 1 {
+		t.Fatalf("post-migration attachments = %+v", events)
+	}
+}
+
+// Opening the same database twice must not attempt the migration a second time.
+func TestMigrationIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repeat.db")
+
+	first, err := Open(path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := first.InsertEvent(makeEvent("slack", "bot-a", "hello", "in")); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first: %v", err)
+	}
+
+	second, err := Open(path)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	defer second.Close()
+
+	events, err := second.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list after reopen: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+}
+
+// A corrupt attachments blob should degrade to no attachments rather than
+// making the whole row unreadable.
+func TestMalformedAttachmentsColumnDegradesGracefully(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corrupt.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	id, err := s.InsertEvent(makeEvent("slack", "bot-a", "row with bad blob", "in"))
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if _, err := s.db.Exec(`UPDATE events SET attachments = ? WHERE id = ?`, "{not json", id); err != nil {
+		t.Fatalf("corrupt column: %v", err)
+	}
+
+	events, err := s.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Text != "row with bad blob" {
+		t.Fatalf("text = %q", events[0].Text)
+	}
+	if len(events[0].Attachments) != 0 {
+		t.Fatalf("expected no attachments from corrupt blob, got %+v", events[0].Attachments)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+// Path is a rendering of Key under the currently configured backend, so it
+// must never reach the database - persisting it would strand history the
+// moment the storage root moves.
+func TestAttachmentPathIsNeverPersisted(t *testing.T) {
+	s := openTestStore(t)
+
+	ev := makeEvent("telegram", "bot-a", "with file", "in")
+	ev.Attachments = []protocol.Attachment{{
+		Name:   "photo.jpg",
+		Key:    "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		Digest: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		Path:   "/home/someone/.local/share/pantalk/media/9f/9f86d0.jpg",
+	}}
+
+	id, err := s.InsertEvent(ev)
+	if err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	var raw string
+	if err := s.db.QueryRow(`SELECT attachments FROM events WHERE id = ?`, id).Scan(&raw); err != nil {
+		t.Fatalf("read raw column: %v", err)
+	}
+
+	if strings.Contains(raw, "/home/someone") || strings.Contains(raw, `"path"`) {
+		t.Fatalf("path leaked into storage: %s", raw)
+	}
+	if !strings.Contains(raw, `"key"`) {
+		t.Fatalf("key was not persisted: %s", raw)
+	}
+
+	events, err := s.ListEvents(EventFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if events[0].Attachments[0].Path != "" {
+		t.Fatalf("path came back from storage: %q", events[0].Attachments[0].Path)
+	}
+	if events[0].Attachments[0].Key == "" {
+		t.Fatalf("key did not round-trip")
+	}
+}
+
+func TestAttachmentPathIsNotPersistedForNotifications(t *testing.T) {
+	s := openTestStore(t)
+
+	ev := makeEvent("telegram", "bot-a", "with file", "in")
+	ev.Notify = true
+	ev.Attachments = []protocol.Attachment{{Name: "a.png", Key: "abc", Path: "/tmp/should-not-persist.png"}}
+
+	if _, err := s.InsertNotification(ev); err != nil {
+		t.Fatalf("insert notification: %v", err)
+	}
+
+	var raw string
+	if err := s.db.QueryRow(`SELECT attachments FROM notifications LIMIT 1`).Scan(&raw); err != nil {
+		t.Fatalf("read raw column: %v", err)
+	}
+
+	if strings.Contains(raw, "should-not-persist") {
+		t.Fatalf("path leaked into notification storage: %s", raw)
+	}
+}
+
+func TestReferencedAttachmentKeysSpansBothTables(t *testing.T) {
+	s := openTestStore(t)
+
+	eventOnly := makeEvent("telegram", "bot-a", "in history", "in")
+	eventOnly.Attachments = []protocol.Attachment{{Name: "a.png", Key: "key-event"}}
+	if _, err := s.InsertEvent(eventOnly); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	notificationOnly := makeEvent("telegram", "bot-a", "in notifications", "in")
+	notificationOnly.Notify = true
+	notificationOnly.Attachments = []protocol.Attachment{{Name: "b.png", Key: "key-notification"}}
+	if _, err := s.InsertNotification(notificationOnly); err != nil {
+		t.Fatalf("insert notification: %v", err)
+	}
+
+	keys, err := s.ReferencedAttachmentKeys()
+	if err != nil {
+		t.Fatalf("referenced keys: %v", err)
+	}
+
+	for _, want := range []string{"key-event", "key-notification"} {
+		if _, ok := keys[want]; !ok {
+			t.Fatalf("missing key %q in %v", want, keys)
+		}
+	}
+	if len(keys) != 2 {
+		t.Fatalf("got %d keys, want 2: %v", len(keys), keys)
+	}
+}
+
+// The same file referenced by many rows must appear once, and must keep being
+// reported until every referencing row is gone.
+func TestReferencedAttachmentKeysDeduplicatesSharedKey(t *testing.T) {
+	s := openTestStore(t)
+
+	for i := 0; i < 3; i++ {
+		ev := makeEvent("telegram", "bot-a", "same file again", "in")
+		ev.Attachments = []protocol.Attachment{{Name: "shared.png", Key: "shared-key"}}
+		if _, err := s.InsertEvent(ev); err != nil {
+			t.Fatalf("insert event %d: %v", i, err)
+		}
+	}
+
+	keys, err := s.ReferencedAttachmentKeys()
+	if err != nil {
+		t.Fatalf("referenced keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("got %d keys, want 1: %v", len(keys), keys)
+	}
+
+	// Removing some referencing rows must not drop the key.
+	if _, err := s.DeleteEvents(EventFilter{Search: "same file again"}, false); err != nil {
+		t.Fatalf("delete events: %v", err)
+	}
+
+	keys, err = s.ReferencedAttachmentKeys()
+	if err != nil {
+		t.Fatalf("referenced keys after delete: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected no keys after deleting every referencing row, got %v", keys)
+	}
+}
+
+func TestReferencedAttachmentKeysIgnoresAttachmentlessRows(t *testing.T) {
+	s := openTestStore(t)
+
+	for i := 0; i < 5; i++ {
+		if _, err := s.InsertEvent(makeEvent("slack", "bot-a", "plain", "in")); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	keys, err := s.ReferencedAttachmentKeys()
+	if err != nil {
+		t.Fatalf("referenced keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected no keys, got %v", keys)
 	}
 }

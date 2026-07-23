@@ -4,12 +4,60 @@ on:
   push:
     tags:
       - 'v*'
+  # Dispatched by tag-release.yaml because tags pushed with GITHUB_TOKEN do not
+  # trigger another workflow.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate tag and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$GITHUB_REF_NAME" != "v${VERSION}" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION v${VERSION}" >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## \\[$VERSION\\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Test
+        run: go test ./... -count=1 -race
+
+      - name: Test release build
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./... -count=1
+
   release:
+    needs: validate
     runs-on: ubuntu-latest
 
     strategy:
@@ -58,6 +106,7 @@ jobs:
           cp README.md "${OUTDIR}/README.md"
 
           tar -czf "dist/pantalk-${VERSION}-${GOOS}-${GOARCH}.tar.gz" -C dist "pantalk-${VERSION}-${GOOS}-${GOARCH}"
+          cp "dist/pantalk-${VERSION}-${GOOS}-${GOARCH}.tar.gz" "dist/pantalk-${GOOS}-${GOARCH}.tar.gz"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -70,6 +119,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "content<<CHANGELOG_EOF"
+            awk -v version="$VERSION" '
+              $0 ~ "^## \\[" version "\\]" {
+                found = 1
+                next
+              }
+              found && /^## \[/ {
+                exit
+              }
+              found {
+                print
+              }
+            ' CHANGELOG.md
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -83,7 +159,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.content }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.tar.gz
             dist/checksums.txt

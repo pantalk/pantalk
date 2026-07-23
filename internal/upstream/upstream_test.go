@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -190,6 +191,27 @@ func TestMockConnector_ReactNotSupported(t *testing.T) {
 }
 
 // --- WhatsApp tests ---
+
+func TestNewWhatsAppConnectorOpensStaticSQLiteStore(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "whatsapp.db")
+	connector, err := NewWhatsAppConnector(config.BotConfig{
+		Name:   "test-bot",
+		Type:   "whatsapp",
+		DBPath: dbPath,
+	}, func(protocol.Event) {})
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := connector.container.Close(); err != nil {
+			t.Errorf("close connector store: %v", err)
+		}
+	})
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("stat whatsapp database: %v", err)
+	}
+}
 
 func TestResolveWhatsAppJID(t *testing.T) {
 	tests := []struct {

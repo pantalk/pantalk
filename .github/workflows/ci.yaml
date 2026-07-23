@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - next
     tags-ignore:
       - 'v*'
     paths-ignore:
@@ -15,6 +16,7 @@ on:
   pull_request:
     branches:
       - main
+      - next
     paths-ignore:
       - 'docs/**'
       - '*.md'
@@ -48,6 +50,11 @@ jobs:
 
       - name: Test
         run: go test ./... -count=1 -race
+
+      - name: Test release build
+        env:
+          CGO_ENABLED: '0'
+        run: go test ./... -count=1
 
       - name: Build
         run: |
