@@ -985,6 +985,33 @@ func TestNeedsTick(t *testing.T) {
 	}
 }
 
+func TestRunnerFiltersConfiguredBots(t *testing.T) {
+	runner, err := NewRunner(Config{
+		Name:    "selected-bot-only",
+		Bots:    []string{"engineering"},
+		When:    "notify",
+		Command: Command{"codex"},
+	})
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	event := protocol.Event{
+		Service:   "slack",
+		Bot:       "engineering",
+		Kind:      "message",
+		Direction: "in",
+		Notify:    true,
+	}
+	if !runner.Matches(event) {
+		t.Fatal("expected configured bot to match")
+	}
+	event.Bot = "operations"
+	if runner.Matches(event) {
+		t.Fatal("unexpected match for unconfigured bot")
+	}
+}
+
 func TestNewRunner_InvalidAtArgument(t *testing.T) {
 	r, err := NewRunner(Config{
 		Name:    "test",

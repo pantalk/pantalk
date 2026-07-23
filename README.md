@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Give your AI agent a voice on every chat platform.</strong><br/>
-  A lightweight daemon that lets AI agents send, receive, and stream messages across Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, and Zulip through a single interface.
+  A lightweight daemon that lets AI agents send, receive, and stream messages across local test conversations, Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, and Zulip through a single interface.
 </p>
 
 <p align="center">
@@ -59,6 +59,7 @@ graph TD
 
 | Platform       | Transport                       | Status          |
 | -------------- | ------------------------------- | --------------- |
+| **Local**      | Unix socket                     | ✅ Dev/test     |
 | **Slack**      | Socket Mode + Web API           | ✅ Full support |
 | **Discord**    | Gateway + REST API              | ✅ Full support |
 | **Mattermost** | WebSocket + REST API            | ✅ Full support |
@@ -69,10 +70,6 @@ graph TD
 | **Twilio**     | REST API (polling + send)       | ✅ Full support |
 | **Zulip**      | REST API + Event Queue          | ✅ Full support |
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=pantalk/pantalk&type=date&legend=top-left)](https://www.star-history.com/#pantalk/pantalk&type=date&legend=top-left)
-
 ---
 
 ## Architecture
@@ -80,9 +77,12 @@ graph TD
 | Component  | Role                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------- |
 | `pantalkd` | Local daemon - maintains persistent upstream sessions (WebSocket, Gateway, long-poll) |
-| `pantalk`  | Unified CLI - messaging, admin, and config management                                 |
+| `pantalk`  | Unified CLI plus an embedded one-command local testing mode                           |
 
-All clients connect to `pantalkd` through a **Unix domain socket** using a simple JSON protocol. AI agents and LLM tools can send, receive, and stream chat messages without embedding any service SDK.
+Normal client commands connect to `pantalkd` through a **Unix domain socket**
+using a simple JSON protocol. `pantalk local` embeds the same server and still
+uses that socket protocol internally. AI agents and LLM tools can send,
+receive, and stream chat messages without embedding a provider SDK.
 
 ### Design Principles
 
@@ -102,6 +102,9 @@ configs/
   pantalk.example.yaml   # Example configuration
 docs/
   agents.md              # Reactive agent configuration guide
+  codex-agent.md         # Persistent native Codex app-server driver
+  claude-agent.md        # Durable local Claude Code conversational driver
+  local-connector.md     # Offline injection and interactive chat
   slack-setup.md         # Slack platform setup guide
   discord-setup.md       # Discord platform setup guide
   mattermost-setup.md    # Mattermost platform setup guide
@@ -143,6 +146,48 @@ EOF
 ```
 
 See `configs/pantalk.example.yaml` for a full example with all platforms.
+
+For a zero-config local Codex conversation:
+
+```bash
+pantalk local --workdir .
+```
+
+This starts the real daemon, local connector, native Codex app-server driver,
+and interactive chat inside one process. It defaults to a read-only sandbox and
+persists conversation state in `~/.local/share/pantalk/local.db`. Use
+`--ephemeral` to discard the session on exit or
+`--sandbox workspace-write` when you intentionally want Codex to edit files.
+
+Use the same local flow with Claude Code:
+
+```bash
+pantalk local --driver claude --workdir .
+```
+
+This reuses the installed Claude Code authentication and configuration,
+defaults to `plan` permissions, and resumes the Claude session on later turns.
+
+To test the connector separately or attach it to a larger configuration,
+configure a credential-free local bot:
+
+```yaml
+bots:
+  - name: local-test
+    type: local
+```
+
+Then inject a direct inbound message or open an interactive terminal:
+
+```bash
+pantalk inject --bot local-test --user alice --text "hello"
+pantalk chat --bot local-test --user alice
+```
+
+The local connector uses the same routing, notification, history, and streaming
+pipeline as provider connectors, but never makes network calls and never echoes
+outbound messages back as inbound messages. See
+[`docs/local-connector.md`](docs/local-connector.md).
 
 ### 2. Start the daemon
 
@@ -274,6 +319,7 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 ```json
 {"action": "bots"}
 {"action": "send", "bot": "my-bot", "channel": "C0123", "text": "hello"}
+{"action": "inject", "bot": "local-test", "user": "alice", "target": "user:alice", "text": "hello"}
 {"action": "send", "bot": "my-bot", "channel": "C0123", "text": "see attached", "attach": ["/abs/path/report.pdf"]}
 {"action": "history", "bot": "my-bot", "channel": "C0123", "limit": 20}
 {"action": "history", "bot": "my-bot", "search": "deploy", "limit": 50}
@@ -382,8 +428,8 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ## Comparisons
 
-| Compared to                        | Guide                                          | In short                                                                                                                     |
-| ---------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Compared to                           | Guide                                      | In short                                                                                                                                                |
+| ------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both give agents a unified, addressable event stream. Buzz consolidates your team into one workspace; Pantalk federates the platforms they already use. |
 
 ---

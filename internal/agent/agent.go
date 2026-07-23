@@ -40,13 +40,14 @@ var AllowedCommands = map[string]bool{
 
 // Config describes a single agent definition from the YAML config.
 type Config struct {
-	Name     string  `yaml:"name"`
-	When     string  `yaml:"when"`     // expr expression evaluated against each event
-	Command  Command `yaml:"command"`  // argv - string or []string, exec'd directly
-	Workdir  string  `yaml:"workdir"`  // optional working directory
-	Buffer   int     `yaml:"buffer"`   // seconds to batch notifications (default 30)
-	Timeout  int     `yaml:"timeout"`  // max runtime in seconds (default 120)
-	Cooldown int     `yaml:"cooldown"` // min seconds between runs (default 60)
+	Name     string   `yaml:"name"`
+	Bots     []string `yaml:"bots"`     // optional configured bot-name allowlist
+	When     string   `yaml:"when"`     // expr expression evaluated against each event
+	Command  Command  `yaml:"command"`  // argv - string or []string, exec'd directly
+	Workdir  string   `yaml:"workdir"`  // optional working directory
+	Buffer   int      `yaml:"buffer"`   // seconds to batch notifications (default 30)
+	Timeout  int      `yaml:"timeout"`  // max runtime in seconds (default 120)
+	Cooldown int      `yaml:"cooldown"` // min seconds between runs (default 60)
 }
 
 // exprEnv is the environment exposed to "when" expressions. Field names are
@@ -173,6 +174,7 @@ func everyFunc(tick bool, hour, minute int, interval string) (bool, error) {
 type Runner struct {
 	cfg     Config
 	program *vm.Program
+	bots    map[string]struct{}
 
 	mu         sync.Mutex
 	running    bool
@@ -204,17 +206,22 @@ func NewRunner(cfg Config) (*Runner, error) {
 		whenExpr = "notify"
 	}
 
-	program, err := expr.Compile(whenExpr,
-		expr.Env(exprEnv{}),
-		expr.AsBool(),
-	)
+	program, err := compileWhen(whenExpr)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: invalid when expression: %w", cfg.Name, err)
+	}
+
+	selectedBots := make(map[string]struct{}, len(cfg.Bots))
+	for _, bot := range cfg.Bots {
+		if bot = strings.TrimSpace(bot); bot != "" {
+			selectedBots[bot] = struct{}{}
+		}
 	}
 
 	return &Runner{
 		cfg:     cfg,
 		program: program,
+		bots:    selectedBots,
 	}, nil
 }
 
@@ -228,6 +235,22 @@ func (r *Runner) Matches(event protocol.Event) bool {
 // time for tick fields (hour, minute, weekday). This allows deterministic
 // testing of time-based expressions.
 func (r *Runner) MatchesAt(event protocol.Event, now time.Time) bool {
+	if len(r.bots) > 0 {
+		if _, selected := r.bots[event.Bot]; !selected {
+			return false
+		}
+	}
+	return matchesAt(r.cfg.Name, r.program, event, now)
+}
+
+func compileWhen(whenExpr string) (*vm.Program, error) {
+	return expr.Compile(whenExpr,
+		expr.Env(exprEnv{}),
+		expr.AsBool(),
+	)
+}
+
+func matchesAt(name string, program *vm.Program, event protocol.Event, now time.Time) bool {
 	isTick := event.Kind == "tick"
 	isMessage := event.Kind == "message" && event.Direction == "in"
 
@@ -268,9 +291,9 @@ func (r *Runner) MatchesAt(event protocol.Event, now time.Time) bool {
 		return everyFunc(env.Tick, env.Hour, env.Minute, interval)
 	}
 
-	result, err := expr.Run(r.program, env)
+	result, err := expr.Run(program, env)
 	if err != nil {
-		log.Printf("[agent:%s] when expression error: %v", r.cfg.Name, err)
+		log.Printf("[agent:%s] when expression error: %v", name, err)
 		return false
 	}
 
@@ -382,7 +405,11 @@ func (r *Runner) run(triggerCount int) {
 // functions (at, every, tick, hour, minute, weekday). If no runners need
 // ticks, the server can skip the 1-minute ticker entirely.
 func (r *Runner) NeedsTick() bool {
-	w := strings.TrimSpace(r.cfg.When)
+	return needsTick(r.cfg.When)
+}
+
+func needsTick(when string) bool {
+	w := strings.TrimSpace(when)
 	if w == "" {
 		w = "notify"
 	}

@@ -16,6 +16,11 @@ server:
 # ---
 
 bots:
+  # Offline bot for exercising Pantalk's real routing, persistence, and agent
+  # pipeline without provider credentials or network access.
+  - name: local-test
+    type: local
+
   - name: ops-bot
     type: slack
     bot_token: $SLACK_BOT_TOKEN_OPS
@@ -95,16 +100,58 @@ bots:
 
 # ---
 
-# Agents are preconfigured commands that launch automatically when matching
-# events arrive. By default only known agent binaries (claude, codex, aider,
-# goose) are permitted. Start pantalkd with --allow-exec to allow arbitrary
-# commands. The "when" field uses an expression language with boolean operators
-# (&&, ||, !) and event fields: notify, direct, mentions, channel, thread,
-# bot, service, user, text. Time-based triggers are also supported via at()
-# and every() functions. Default when is "notify".
+# Agents are configured separately from messaging bots and select their
+# connections through the "bots" list. The native Codex driver owns one
+# persistent app-server process and derives a durable Codex thread per
+# integration conversation.
 #
 # agents:
+#   - name: engineering-assistant         # user-chosen agent identifier
+#     driver: codex                       # starts: codex app-server --stdio
+#     bots:
+#       - local-test                      # names from the bots section above
+#       - ops-bot
+#     when: notify                        # optional; this is the default
+#     workdir: /home/user/project         # repository Codex works in
+#     timeout: 900                        # maximum seconds per turn
+#     instructions: |
+#       You are the engineering assistant for this repository.
+#       Answer the user directly.
+#     codex:                              # every override is optional
+#       # binary: /usr/local/bin/codex    # defaults to codex on PATH
+#       # model: gpt-5.4                  # otherwise inherit local config
+#       # effort: high                    # sent on every turn
+#       sandbox: workspace-write
+#       approval_policy: never
+#
+#   - name: claude-engineering           # reuses local Claude Code auth/config
+#     driver: claude
+#     bots:
+#       - local-test
+#       - ops-bot
+#     when: notify
+#     workdir: /home/user/project
+#     timeout: 900
+#     instructions: |
+#       You are the engineering assistant for this repository.
+#       Answer the user directly.
+#     claude:
+#       # binary: /usr/local/bin/claude  # defaults to claude on PATH
+#       # model: sonnet                  # otherwise inherit local config
+#       # effort: high
+#       permission_mode: plan            # safe non-interactive default
+#       # allowed_tools: [Read, Grep, Glob]
+#       # disallowed_tools: [Edit, Write]
+#
+# Command agents retain the original fire-and-forget CLI behavior. Only known
+# agent binaries (claude, codex, aider, goose, etc.) are permitted unless
+# pantalkd is started with --allow-exec. The "when" field uses an expression
+# language with event fields such as notify, direct, mentions, channel, thread,
+# bot, service, user, and text. Time triggers use at() and every().
+#
 #   - name: responder                     # identifier for logging
+#     driver: command                     # optional when command is present
+#     bots: [ops-bot]                     # optional for command agents
 #     when: "direct || mentions"           # expression (default: "notify")
 #     command: claude -p "Check pantalk notifications and respond"
 #     workdir: /home/user/project          # optional working directory

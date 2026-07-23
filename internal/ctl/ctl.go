@@ -260,7 +260,7 @@ func runConfigAddBot(args []string) error {
 	flags := flag.NewFlagSet("config add-bot", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "config path")
 	name := flags.String("name", "", "bot name")
-	botType := flags.String("type", "", "bot type (slack, discord, mattermost, telegram, whatsapp, irc, matrix, twilio, zulip, imessage)")
+	botType := flags.String("type", "", "bot type (local, slack, discord, mattermost, telegram, whatsapp, irc, matrix, twilio, zulip, imessage)")
 	botToken := flags.String("bot-token", "", "bot_token (literal or $ENV_VAR)")
 	appLevelToken := flags.String("app-level-token", "", "app_level_token (slack only)")
 	accessToken := flags.String("access-token", "", "access_token (matrix only)")
@@ -552,7 +552,8 @@ func chooseProvider(reader *bufio.Reader) (string, error) {
 	fmt.Println("  8) twilio")
 	fmt.Println("  9) zulip")
 	fmt.Println(" 10) imessage")
-	fmt.Println(" 11) done")
+	fmt.Println(" 11) local")
+	fmt.Println(" 12) done")
 
 	choice, err := promptText(reader, "choice", "1", true)
 	if err != nil {
@@ -580,7 +581,9 @@ func chooseProvider(reader *bufio.Reader) (string, error) {
 		return "zulip", nil
 	case "10", "imessage":
 		return "imessage", nil
-	case "11", "done":
+	case "11", "local":
+		return "local", nil
+	case "12", "done":
 		return "done", nil
 	default:
 		return "", errors.New("invalid choice")

@@ -1,8 +1,21 @@
 # Agents
 
-Pantalk can automatically launch AI agents when matching notifications arrive. Instead of polling for new messages, you define agents in your config and `pantalkd` triggers them reactively - buffering events, enforcing cooldowns, and restricting which binaries can run.
+Pantalk routes matching messages to configured agents. An agent uses one of three
+drivers:
 
-Agents are **fire-and-forget**. When triggered, the command runs and reads notifications itself via `pantalk notifications`. No events are piped to stdin.
+- `codex` keeps a native Codex app-server process connected, maintains a
+  thread per conversation, and returns the final response through the
+  originating bot.
+- `claude` invokes the locally configured Claude Code CLI, resumes a durable
+  session per conversation, and returns the final response through the
+  originating bot.
+- `command` launches a CLI command reactively. It retains the original
+  fire-and-forget behavior: the command reads notifications itself via
+  `pantalk notifications`; events are not piped to stdin.
+
+See [Native Codex agent](codex-agent.md) and
+[Claude Code agent](claude-agent.md) for the conversational drivers. The rest
+of this guide describes matching and the command driver.
 
 ## Quick Example
 
@@ -15,6 +28,9 @@ bots:
 
 agents:
   - name: responder
+    driver: command
+    bots:
+      - ops-bot
     when: "direct || mentions"
     command: claude -p "Check pantalk notifications and respond"
     workdir: /home/user/project
@@ -29,6 +45,8 @@ Each agent is defined under the `agents` key in your config:
 ```yaml
 agents:
   - name: responder              # required - unique identifier
+    driver: command              # optional for legacy command configs
+    bots: [ops-bot]              # optional bot-name allowlist
     when: "direct || mentions"   # expression (default: "notify")
     command: claude -p "Check notifications"  # required
     workdir: /home/user/project  # optional - inherits daemon's cwd
@@ -42,8 +60,10 @@ agents:
 | Field      | Required | Default    | Description                                               |
 | ---------- | -------- | ---------- | --------------------------------------------------------- |
 | `name`     | yes      | -          | Unique identifier, used in log messages                   |
+| `driver`   | no       | `command` when `command` exists | `command`, `codex`, or `claude`       |
+| `bots`     | no       | all bots for `command` | Configured bot names this agent may consume      |
 | `when`     | no       | `"notify"` | Boolean expression evaluated against each event           |
-| `command`  | yes      | -          | Binary + args to exec (string or array)                   |
+| `command`  | command driver | -    | Binary + args to exec (string or array)                   |
 | `workdir`  | no       | daemon cwd | Working directory for the command                         |
 | `buffer`   | no       | `30`       | Seconds to wait and batch events before launching         |
 | `timeout`  | no       | `120`      | Maximum runtime in seconds before the process is killed   |
