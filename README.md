@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pantalk.dev">Website</a> · <a href="https://pantalk.dev/about">About</a> · <a href="#quick-start">Quick Start</a> · <a href="#platform-setup">Platform Setup</a>
+  <a href="https://pantalk.dev">Website</a> · <a href="https://pantalk.dev/about">About</a> · <a href="#quick-start">Quick Start</a> · <a href="#docker">Docker</a> · <a href="#platform-setup">Platform Setup</a>
 </p>
 
 ---
@@ -91,6 +91,46 @@ receive, and stream chat messages without embedding a provider SDK.
 - **Composable CLI** - JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
 - **Multi-bot** - define multiple bots per service via config
 - **Local-first** - SQLite persistence, no external dependencies
+
+## Docker
+
+Official Linux amd64 and arm64 images are published to GitHub Container
+Registry from the same version tag as the binary release:
+
+```bash
+docker pull ghcr.io/pantalk/pantalk:latest
+docker run --detach \
+  --name pantalk \
+  --restart unless-stopped \
+  --volume pantalk-config:/home/pantalk/.config/pantalk \
+  --volume pantalk-data:/home/pantalk/.local/share/pantalk \
+  ghcr.io/pantalk/pantalk:latest
+```
+
+The bundled configuration starts a credential-free `local-test` connector.
+Use the CLI inside the running container:
+
+```bash
+docker exec pantalk pantalk bots
+docker exec -it pantalk pantalk chat --bot local-test --user operator
+```
+
+Mount your own configuration to connect real messaging platforms:
+
+```bash
+docker run --detach \
+  --name pantalk \
+  --restart unless-stopped \
+  --env-file .env \
+  --volume "$HOME/.config/pantalk:/home/pantalk/.config/pantalk:ro" \
+  --volume pantalk-data:/home/pantalk/.local/share/pantalk \
+  ghcr.io/pantalk/pantalk:latest
+```
+
+The image runs `pantalkd` as an unprivileged user and includes both `pantalk`
+and `pantalkd`. Native Codex and Claude agents still require their respective
+runtimes and authentication. Extend the image with those runtimes or use
+Pantalk Station when a complete graphical agent environment is preferred.
 
 ## Quick Start
 

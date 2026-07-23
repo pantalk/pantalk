@@ -5,8 +5,9 @@ This document describes how to build, version, and release pantalk binaries.
 ## Overview
 
 Releases are driven by the **`VERSION` file**. Bumping it on `main` starts an
-automated pipeline that tags the exact commit tested by CI and publishes
-multi-platform binaries as a GitHub Release:
+automated pipeline that tags the exact commit tested by CI, publishes
+multi-platform binaries as a GitHub Release, and publishes a matching
+multi-platform container image:
 
 1. Edit `VERSION` and add its matching section to `CHANGELOG.md`.
 2. Merge the change to `main`.
@@ -14,7 +15,7 @@ multi-platform binaries as a GitHub Release:
 4. After CI succeeds, `tag-release.yaml` creates an annotated `v*` tag and
    dispatches `release.yaml` at that tag.
 5. The release workflow validates, rebuilds, packages, checksums, and publishes
-   the binaries with notes from `CHANGELOG.md`.
+   the binaries and container image with notes from `CHANGELOG.md`.
 
 Existing tags and releases are not changed by this process.
 
@@ -32,6 +33,14 @@ Update checks are skipped for those development builds.
 | macOS   | amd64, arm64 |
 | Windows | amd64        |
 
+Container images are published for Linux amd64 and arm64 at
+`ghcr.io/pantalk/pantalk`. Stable releases update `latest`; prereleases publish
+only versioned image tags.
+
+After the first container publication, an organization owner must make the
+GitHub Container Registry package public so it can be pulled without
+authentication.
+
 ## Local builds
 
 A `Makefile` is provided for building locally:
@@ -41,7 +50,13 @@ A `Makefile` is provided for building locally:
 make
 
 # Build with an explicit version
-make VERSION=v0.0.8
+make VERSION=vX.Y.Z
+
+# Build the container image with an explicit version
+docker build \
+  --build-arg VERSION=vX.Y.Z \
+  --tag pantalk/pantalk:local \
+  .
 
 # Cross-compile for a specific platform
 make cross GOOS=darwin GOARCH=arm64
