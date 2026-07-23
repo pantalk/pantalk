@@ -4,6 +4,14 @@ All notable changes to Pantalk are documented here, following [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-07-23
+
+### Fixed
+
+- Send a safe, actionable reply when a native Codex or Claude Code turn fails
+  or completes without a usable response, while retaining detailed errors only
+  in daemon logs.
+
 ## [0.0.7] - 2026-07-23
 
 ### Added

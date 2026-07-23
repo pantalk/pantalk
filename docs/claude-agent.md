@@ -43,6 +43,10 @@ Pantalk does not currently transport Claude's interactive approval questions
 through messaging connectors. Avoid `bypassPermissions` unless the surrounding
 environment provides an appropriate sandbox.
 
+If a turn cannot start or complete, Pantalk replies in the originating
+conversation with an installation/authentication hint; detailed errors remain
+in the daemon logs.
+
 ## Complete configuration
 
 ```yaml
@@ -77,8 +81,6 @@ agents:
 | --- | --- | --- |
 | `name` | yes | Unique Pantalk agent name; namespaces persisted Claude sessions |
 | `driver` | yes | `claude` selects the Claude Code integration |
-| `bots` | yes | Bot connection names this agent may handle |
-| `when` | no | Event filter; defaults to `notify` |
 | `workdir` | no | Repository/directory presented to Claude Code |
 | `timeout` | no | Maximum seconds for each turn; defaults to 120 |
 | `instructions` | no | Instructions appended to Claude Code's system prompt |
@@ -88,6 +90,9 @@ agents:
 | `claude.permission_mode` | no | `plan`, `dontAsk`, `acceptEdits`, `auto`, `manual`, or `bypassPermissions` |
 | `claude.allowed_tools` | no | Optional Claude tool allowlist |
 | `claude.disallowed_tools` | no | Optional Claude tool denylist |
+
+Bot selection and `when` expressions belong to entries in each bot's
+`agents` list. See [Bot bindings](agents.md#bot-bindings).
 
 There is no `command`, `respond_to`, or `session_scope` field for this driver.
 The driver knows how to invoke Claude Code, replies follow the inbound route,

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ type fakeCodexClient struct {
 	turnOpts   []codex.TurnOptions
 
 	resumeErr error
+	runErr    error
 	nextID    string
 	response  string
 	closed    bool
@@ -63,6 +65,9 @@ func (f *fakeCodexClient) RunTurnWithOptions(
 	f.mu.Unlock()
 	if ran != nil {
 		ran <- struct{}{}
+	}
+	if f.runErr != nil {
+		return codex.TurnResult{}, f.runErr
 	}
 	return codex.TurnResult{ThreadID: threadID, TurnID: "turn-1", Text: response, Status: "completed"}, nil
 }
@@ -263,5 +268,48 @@ func TestCodexRuntimeReplacesUnresumableThread(t *testing.T) {
 	sessions.mu.Unlock()
 	if saved != "thread-replacement" {
 		t.Fatalf("expected replacement thread to be persisted, got %q", saved)
+	}
+}
+
+func TestCodexRuntimeRepliesWithSafeHintWhenTurnFails(t *testing.T) {
+	client := &fakeCodexClient{
+		runErr: errors.New("authentication failed: secret-token"),
+	}
+	replies := make(chan string, 1)
+	runtime, err := NewCodexRuntime(context.Background(), CodexRuntimeConfig{
+		Name:    "engineering",
+		Timeout: time.Second,
+	}, client, &memorySessions{}, func(_ context.Context, _ protocol.Event, text string) error {
+		replies <- text
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	defer runtime.Stop()
+
+	runtime.Handle(protocol.Event{
+		Service:   "local",
+		Bot:       "local-test",
+		Kind:      "message",
+		Direction: "in",
+		User:      "alice",
+		Target:    "user:alice",
+		Direct:    true,
+		Notify:    true,
+		Text:      "hello",
+	})
+
+	select {
+	case reply := <-replies:
+		if !strings.Contains(reply, "Codex agent could not respond") ||
+			!strings.Contains(reply, "codex login status") {
+			t.Fatalf("unexpected failure hint %q", reply)
+		}
+		if strings.Contains(reply, "secret-token") {
+			t.Fatalf("failure hint leaked internal error: %q", reply)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failure hint")
 	}
 }

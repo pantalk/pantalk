@@ -91,6 +91,9 @@ pantalk inject \
 
 Codex must already be installed and authenticated for the user running
 `pantalkd`. Pantalk inherits that user's environment and Codex configuration.
+If a turn cannot start or complete, Pantalk replies in the originating
+conversation with an installation/authentication hint; detailed errors remain
+in the daemon logs.
 
 ## Field reference
 
@@ -98,8 +101,6 @@ Codex must already be installed and authenticated for the user running
 | --- | --- | --- |
 | `name` | yes | Unique Pantalk agent name; also namespaces persisted Codex sessions |
 | `driver` | yes | `codex` selects the native app-server integration |
-| `bots` | yes | Bot connection names this agent may handle |
-| `when` | no | Event filter; defaults to `notify` |
 | `workdir` | no | Repository/directory presented to Codex |
 | `timeout` | no | Maximum seconds for each turn; defaults to 120 |
 | `instructions` | no | Developer instructions for each new or resumed thread |
@@ -108,6 +109,9 @@ Codex must already be installed and authenticated for the user running
 | `codex.effort` | no | Reasoning-effort override sent on each turn |
 | `codex.sandbox` | no | `read-only`, `workspace-write`, or `danger-full-access` |
 | `codex.approval_policy` | no | `untrusted`, `on-request`, or `never` |
+
+Bot selection and `when` expressions belong to entries in each bot's
+`agents` list. See [Bot bindings](agents.md#bot-bindings).
 
 There is no `command`, `respond_to`, or `session_scope` field for the Codex
 driver:

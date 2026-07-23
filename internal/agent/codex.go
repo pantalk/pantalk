@@ -157,6 +157,7 @@ func (r *CodexRuntime) processEvent(conversationKey string, event protocol.Event
 	threadID, err := r.threadForConversation(conversationKey)
 	if err != nil {
 		log.Printf("[agent:%s] prepare conversation: %v", r.cfg.Name, err)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, codexFailureReply)
 		return
 	}
 
@@ -170,12 +171,14 @@ func (r *CodexRuntime) processEvent(conversationKey string, event protocol.Event
 	cancel()
 	if err != nil {
 		log.Printf("[agent:%s] codex turn failed: %v", r.cfg.Name, err)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, codexFailureReply)
 		return
 	}
 
 	text := strings.TrimSpace(result.Text)
 	if text == "" {
 		log.Printf("[agent:%s] codex turn %s completed without a final response", r.cfg.Name, result.TurnID)
+		deliverAgentFailure(r.ctx, r.cfg.Name, r.reply, event, codexFailureReply)
 		return
 	}
 
