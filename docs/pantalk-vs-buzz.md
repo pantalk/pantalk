@@ -8,6 +8,8 @@
 
 Both give an agent a unified event stream, a way to be mentioned, and a runner that launches it on demand. The difference is whether that unification happens by **moving people** or by **bridging platforms**.
 
+There is a second difference that matters just as much, and it is about coupling. Buzz decides the platform for you - its own workspace. Anthropic's Claude tag decides the harness for you - Claude, in Slack. Every product in this category picks one end of the pair and ships it welded. Pantalk picks neither: harnesses attach through drivers, platforms through connectors, and swapping one never costs you the other.
+
 ---
 
 ## Two Topologies
@@ -49,6 +51,7 @@ graph TD
 | **Protocol**          | Nostr (NIP-01/29/42), signed events                       | Each platform's native protocol, normalized                   |
 | **Agent identity**    | Native member with its own keypair and audit trail        | A bot account per platform, presented as one identity         |
 | **Agent runner**      | ACP harness (`BUZZ_ACP_AGENT_COMMAND`)                    | Reusable agents with ordered per-bot `when:` bindings          |
+| **Harness choice**    | Any ACP-compatible binary                                 | Native drivers for Claude Code and Codex; `command` driver for Copilot, Gemini CLI, Goose, OpenCode, Aider, and anything else |
 | **Agent interface**   | JSON in / JSON out CLI                                    | JSON over a Unix socket, plus a CLI                           |
 | **History**           | Full-text search across the workspace (NIP-50)            | Local SQLite across every connected platform                  |
 | **Language**          | Rust                                                      | Go                                                             |
@@ -71,6 +74,7 @@ If you can move your team, and you want one audited log for everything, Buzz is 
 
 - **Meets humans where they already are.** This is the whole thesis. The hardest part of agent adoption is not the agent - it is getting people to change where they talk. Pantalk's adoption cost is zero: your colleagues keep using Slack, your customers keep using WhatsApp, your on-call keeps getting SMS.
 - **Ten platforms, one interface.** One reusable agent definition can be bound by multiple bots. A single runtime can be mentioned in Slack, DM'd on Telegram, and texted over Twilio while each conversation keeps an isolated session.
+- **Neither end is welded.** The harness is a `driver:` line and the platform is a `type:` line, and they are declared in separate blocks that never reference each other. Route `#code-review` to Claude Code and everything else to Codex; replace both next quarter without re-doing a single platform integration. There is a working example of exactly this in [Pantalk Station](https://github.com/pantalk/station), which ships both harnesses preinstalled and swaps the messaging system with a deployment recipe.
 - **Reachable from a phone with no app.** WhatsApp, SMS, and iMessage mean your agent is reachable by anyone with a phone number, including people who will never install anything.
 - **No infrastructure.** A single binary and a SQLite file. No Postgres, no Redis, no search cluster, no server to operate.
 - **Works with platforms you don't control.** You can bridge a customer's Slack or a community's IRC channel. You cannot ask them to join your workspace.
@@ -83,7 +87,7 @@ The trade is fidelity: Pantalk normalizes to what every platform can express, so
 
 **Choose Buzz if** you can move your team into a new workspace, you want one audited event log spanning chat and code, and you need cryptographically scoped per-agent access.
 
-**Choose Pantalk if** your humans are already somewhere else and won't move, you need reach across several platforms at once, or you want your agent talking to people today without operating a server.
+**Choose Pantalk if** your humans are already somewhere else and won't move, you need reach across several platforms at once, you expect to change harnesses before you change chat platforms, or you want your agent talking to people today without operating a server.
 
 They are not really competing for the same slot. Buzz is where your team could work. Pantalk is how your agent reaches the places your team already works.
 
@@ -101,6 +105,8 @@ The shape that would genuinely add something is the reverse: bridging a Buzz cha
 
 ## See Also
 
-- [Agents](agents.md) - launch AI agents automatically when matching notifications arrive
+- [Agents](agents.md) - bind any harness to any bot with drivers and `when:` routing
+- [Claude Agent](claude-agent.md) / [Codex Agent](codex-agent.md) - the native harness drivers
 - [Claude Code Hooks](claude-code-hooks.md) - use Pantalk as a Claude Code hook
 - [Platform Setup](../README.md#platform-setup) - per-platform connection guides
+- [Pantalk Station](https://github.com/pantalk/station) - prebuilt desktop showing the whole thing working

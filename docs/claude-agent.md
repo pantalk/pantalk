@@ -13,6 +13,11 @@ This differs from the `command` driver: the inbound message is passed directly
 to Claude, and Pantalk automatically delivers Claude's final response through
 the originating bot.
 
+Nothing below is platform-specific. The same agent definition works whether the
+conversation arrives from Slack, WhatsApp, SMS, IRC, or a local test connector,
+and replacing `driver: claude` with `driver: codex` leaves every one of those
+connections untouched.
+
 ## Zero-config local test
 
 From the repository Claude should use:
