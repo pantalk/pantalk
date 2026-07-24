@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Any agent, any chat.</strong><br/>
-  A daemon that puts the coding agent you already run - Claude Code, Codex, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, SMS, and Zulip. Nothing is welded together, so you pick both ends and can change either one later.
+  A daemon that puts the coding agent you already run - Claude Code, Codex, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, SMS, Zulip, and iMessage. Nothing is welded together, so you pick both ends and can change either one later.
 </p>
 
 <p align="center">
@@ -18,9 +18,10 @@
 ## The Problem
 
 Putting an agent into chat is a solved problem - once, for one pair. Anthropic's
-Claude tag puts Claude in Slack. Block's [Buzz](https://github.com/block/buzz)
-puts Block's agents in Block's workspace. Both are good products, and both
-decide the pair for you: one harness, welded to one platform.
+Claude tag puts Claude in Slack. OpenAI's Codex app puts Codex in Slack. Block's
+[Buzz](https://github.com/block/buzz) puts Block's agents in Block's workspace.
+All of them are good products, and all of them decide the pair for you: one
+harness, welded to one platform.
 
 That is the wrong shape. Harnesses turn over fast - the one you standardized on
 last quarter is not the one you want in this repo today. Platforms don't turn
@@ -51,6 +52,9 @@ graph TD
     Daemon --> Telegram
     Daemon --> WhatsApp
     Daemon --> IRC
+    Daemon --> XMPP["XMPP / Jabber"]
+    Daemon --> Twitch
+    Daemon --> Nostr
     Daemon --> Matrix
     Daemon --> Twilio["Twilio / SMS"]
     Daemon --> Zulip
@@ -159,7 +163,7 @@ ever touching a CLI.
 | **Swap platform** | Wait for the vendor to ship it | Change `type:` in YAML                             |
 | **Many at once**  | One agent, one platform        | N harnesses × M platforms, one daemon              |
 | **Adoption cost** | Your team moves or installs    | Nothing changes for anyone                         |
-| **Reach**         | The supported platform         | Ten platforms, including phone numbers with no app |
+| **Reach**         | The supported platform         | Thirteen platforms, including phone numbers with no app |
 
 And beneath that, the plumbing every one of those pairings would otherwise make
 you rebuild:
@@ -205,9 +209,13 @@ command.
 | **Telegram**   | Bot API long-poll + sendMessage | ✅ Full support |
 | **WhatsApp**   | Web multi-device (whatsmeow)    | ✅ Full support |
 | **IRC**        | TCP/TLS + IRC protocol          | ✅ Full support |
+| **XMPP/Jabber** | Client-to-server + MUC          | ✅ DM/MUC + typing |
+| **Twitch**      | IRC over TLS + IRCv3            | ✅ Chat support |
+| **Nostr**       | Relay WebSocket (NIP-17/28/29)  | ✅ DM/channel support |
 | **Matrix**     | Client-Server API (mautrix-go)  | ✅ Full support |
 | **Twilio**     | REST API (polling + send)       | ✅ Full support |
 | **Zulip**      | REST API + Event Queue          | ✅ Full support |
+| **iMessage**   | Messages database + AppleScript | ✅ macOS support |
 
 ---
 
@@ -294,6 +302,10 @@ and `pantalkd`. Harnesses still require their own runtimes and authentication.
 Extend the image with the harness you want, or use
 [Pantalk Station](#pantalk-station), which ships Codex and Claude Code already
 installed and registered.
+
+For the topologies beyond a single container - exporting the daemon socket to
+containerized or virtualized agents, sidecars, Kubernetes, and what each one
+does to the trust boundary - see [`docs/deployment.md`](docs/deployment.md).
 
 ## Quick Start
 
@@ -472,6 +484,25 @@ pantalk config add-bot \
   --type slack --name my-bot \
   --bot-token '$SLACK_BOT_TOKEN' --app-level-token '$SLACK_APP_LEVEL_TOKEN'
 
+# XMPP/Jabber bot (direct messages and MUC rooms)
+pantalk config add-bot \
+  --type xmpp --name community-xmpp \
+  --jid agent@example.com --password '$XMPP_PASSWORD' \
+  --channels engineering@conference.example.com
+
+# Twitch chat bot
+pantalk config add-bot \
+  --type twitch --name livestream \
+  --username pantalkbot --access-token '$TWITCH_ACCESS_TOKEN' \
+  --channels pantalkdev
+
+# Nostr bot (NIP-17 DMs and NIP-28/NIP-29 channels)
+pantalk config add-bot \
+  --type nostr --name nostr-agent \
+  --private-key '$NOSTR_PRIVATE_KEY' \
+  --relays wss://relay.example.com \
+  --channels nip28:channel-event-id
+
 # Hot-reload running daemon
 pantalk reload
 ```
@@ -484,7 +515,7 @@ pantalk reload
 
 - ❌ Unknown keys → config load failure
 - ❌ Missing required provider fields → fast failure
-- ✅ `transport` and `endpoint` optional for built-in providers (Slack, Discord, Telegram)
+- ✅ Provider-specific validation fails fast; each setup guide documents its required fields
 - ⚠️ Mattermost requires `endpoint` on the bot entry
 
 ### Multi-bot support
@@ -548,6 +579,9 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 | Telegram   | Bot API long-poll | `sendMessage` |
 | WhatsApp   | Web multi-device  | `SendMessage` |
 | IRC        | TCP/TLS           | `PRIVMSG`     |
+| XMPP/Jabber | Client-to-server  | Message stanza |
+| Twitch      | IRC over TLS      | `PRIVMSG`      |
+| Nostr       | Relay WebSocket   | Signed event   |
 | Matrix     | Client-Server API | REST API      |
 | Twilio     | REST API poll     | REST API      |
 | Zulip      | Event Queue       | REST API      |
@@ -622,6 +656,9 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | Telegram   | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)     |
 | WhatsApp   | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device        |
 | IRC        | [IRC Setup](docs/irc-setup.md)               | TCP/TLS                 |
+| XMPP/Jabber | [XMPP Setup](docs/xmpp-setup.md)             | Client-to-server + MUC  |
+| Twitch      | [Twitch Setup](docs/twitch-setup.md)         | IRC over TLS + IRCv3    |
+| Nostr       | [Nostr Setup](docs/nostr-setup.md)           | Relay WebSocket         |
 | Matrix     | [Matrix Setup](docs/matrix-setup.md)         | Client-Server API       |
 | Twilio     | [Twilio Setup](docs/twilio-setup.md)         | REST API (polling)      |
 | Zulip      | [Zulip Setup](docs/zulip-setup.md)           | REST API + Event Queue  |
@@ -632,6 +669,7 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 | Integration | Guide                                                 | Description                                                                                           |
 | ----------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Deployment  | [Deployment](docs/deployment.md)                      | Topologies from single-host to socket-export containers, sidecars, and Station - with the trust model |
 | Agents      | [Agents](docs/agents.md)                              | Bind any harness to any bot - drivers, `when:` routing, and scheduled prompts                         |
 | Claude Code | [Claude Agent](docs/claude-agent.md)                  | Native Claude Code driver - persistent sessions, permission modes, tool allowlists                    |
 | Codex       | [Codex Agent](docs/codex-agent.md)                    | Native Codex driver - persistent app-server, sandbox and approval policy                              |
@@ -645,13 +683,15 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 | Compared to                           | Guide                                      | In short                                                                                                                                                                      |
 | ------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both make an agent a real participant in team conversation. Buzz pairs its own agents with its own workspace; Pantalk leaves both ends open and bridges what you already use. |
+| [Claude Tag](https://claude.com/product/tag) | [Pantalk vs Claude Tag](docs/pantalk-vs-claude-tag.md) | Claude Tag is one harness in one place - Claude, in Slack, managed by Anthropic. Pantalk brings the same teammate pattern to any harness across thirteen platforms, running on your own machine. |
+| [Codex in Slack](https://developers.openai.com/codex/integrations/slack) | [Pantalk vs Codex in Slack](docs/pantalk-vs-codex-slack.md) | Not a rival agent - the same one. OpenAI runs Codex in their cloud against GitHub, in Slack. Pantalk runs Codex on your machine against your working tree, in thirteen places. |
 
 ---
 
 ## Roadmap
 
 - Richer provider event support (edits, reactions, thread metadata)
-- Typing indicators for the remaining connectors (Slack, Discord, Mattermost, Matrix, WhatsApp, Zulip, iMessage - Telegram shipped)
+- Typing indicators for the remaining connectors (Slack, Discord, Mattermost, Matrix, WhatsApp, Zulip, iMessage - Telegram and XMPP shipped)
 - Inbound attachment support for the remaining connectors (Telegram shipped)
 - Provider-specific message normalization
 - Additional platform connectors

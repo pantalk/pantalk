@@ -64,6 +64,8 @@ type BotConfig struct {
 	Name          string            `yaml:"name"`
 	Type          string            `yaml:"type"`
 	DisplayName   string            `yaml:"display_name"`
+	Username      string            `yaml:"username"`
+	JID           string            `yaml:"jid"`
 	BotToken      string            `yaml:"bot_token"`
 	AppLevelToken string            `yaml:"app_level_token"`
 	Transport     string            `yaml:"transport"`
@@ -75,7 +77,9 @@ type BotConfig struct {
 	APIKey        string            `yaml:"api_key"`
 	BotEmail      string            `yaml:"bot_email"`
 	AccessToken   string            `yaml:"access_token"`
+	PrivateKey    string            `yaml:"private_key"`
 	DBPath        string            `yaml:"db_path"`
+	Relays        []string          `yaml:"relays"`
 	Channels      []string          `yaml:"channels"`
 	Agents        []BotAgentBinding `yaml:"agents"`
 }
@@ -305,6 +309,30 @@ func validate(cfg Config, allowExec bool) error {
 			if strings.TrimSpace(bot.Endpoint) == "" {
 				return fmt.Errorf("bot %q requires endpoint for irc (e.g. irc.libera.chat:6697)", bot.Name)
 			}
+		case "xmpp":
+			if strings.TrimSpace(bot.JID) == "" {
+				return fmt.Errorf("bot %q requires jid for xmpp (e.g. agent@example.com)", bot.Name)
+			}
+			if strings.TrimSpace(bot.Password) == "" {
+				return fmt.Errorf("bot %q requires password for xmpp", bot.Name)
+			}
+		case "twitch":
+			if strings.TrimSpace(bot.Username) == "" {
+				return fmt.Errorf("bot %q requires username for twitch", bot.Name)
+			}
+			if strings.TrimSpace(bot.AccessToken) == "" {
+				return fmt.Errorf("bot %q requires access_token for twitch", bot.Name)
+			}
+			if !hasNonBlankString(bot.Channels) {
+				return fmt.Errorf("bot %q requires at least one channel for twitch", bot.Name)
+			}
+		case "nostr":
+			if strings.TrimSpace(bot.PrivateKey) == "" {
+				return fmt.Errorf("bot %q requires private_key for nostr", bot.Name)
+			}
+			if !hasNonBlankString(bot.Relays) {
+				return fmt.Errorf("bot %q requires at least one relay for nostr", bot.Name)
+			}
 		case "twilio":
 			if strings.TrimSpace(bot.AuthToken) == "" {
 				return fmt.Errorf("bot %q requires auth_token (Twilio Auth Token)", bot.Name)
@@ -457,4 +485,13 @@ func validate(cfg Config, allowExec bool) error {
 	}
 
 	return nil
+}
+
+func hasNonBlankString(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }

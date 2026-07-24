@@ -169,3 +169,74 @@ bots:
 		t.Fatalf("json output must not include credentials: %q", output)
 	}
 }
+
+func TestRunConfigAddBotSupportsNewProtocols(t *testing.T) {
+	configPath := writeTestConfig(t, `
+bots:
+  - name: local-test
+    type: local
+`)
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "xmpp",
+			args: []string{
+				"--config", configPath,
+				"--name", "xmpp-bot",
+				"--type", "xmpp",
+				"--jid", "agent@example.com",
+				"--password", "$XMPP_PASSWORD",
+				"--channels", "engineering@conference.example.com",
+			},
+		},
+		{
+			name: "twitch",
+			args: []string{
+				"--config", configPath,
+				"--name", "twitch-bot",
+				"--type", "twitch",
+				"--username", "pantalkbot",
+				"--access-token", "$TWITCH_ACCESS_TOKEN",
+				"--channels", "pantalkdev",
+			},
+		},
+		{
+			name: "nostr",
+			args: []string{
+				"--config", configPath,
+				"--name", "nostr-bot",
+				"--type", "nostr",
+				"--private-key", "$NOSTR_PRIVATE_KEY",
+				"--relays", "wss://relay.example.com",
+				"--channels", "nip28:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captureStdout(t, func() {
+				if err := runConfigAddBot(tt.args); err != nil {
+					t.Fatalf("runConfigAddBot() error = %v", err)
+				}
+			})
+		})
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load resulting config: %v", err)
+	}
+	if len(cfg.Bots) != 4 {
+		t.Fatalf("bots = %d, want 4", len(cfg.Bots))
+	}
+	if cfg.Bots[1].JID != "agent@example.com" ||
+		cfg.Bots[2].Username != "pantalkbot" ||
+		len(cfg.Bots[3].Relays) != 1 ||
+		cfg.Bots[3].Relays[0] != "wss://relay.example.com" {
+		t.Fatalf("new protocol bots = %#v", cfg.Bots[1:])
+	}
+}

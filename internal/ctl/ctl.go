@@ -260,12 +260,16 @@ func runConfigAddBot(args []string) error {
 	flags := flag.NewFlagSet("config add-bot", flag.ContinueOnError)
 	configPath := flags.String("config", defaultConfigPath, "config path")
 	name := flags.String("name", "", "bot name")
-	botType := flags.String("type", "", "bot type (local, slack, discord, mattermost, telegram, whatsapp, irc, matrix, twilio, zulip, imessage)")
+	botType := flags.String("type", "", "bot type (local, slack, discord, mattermost, telegram, whatsapp, irc, xmpp, twitch, nostr, matrix, twilio, zulip, imessage)")
+	username := flags.String("username", "", "username (twitch only)")
+	jid := flags.String("jid", "", "account JID (xmpp only)")
 	botToken := flags.String("bot-token", "", "bot_token (literal or $ENV_VAR)")
 	appLevelToken := flags.String("app-level-token", "", "app_level_token (slack only)")
-	accessToken := flags.String("access-token", "", "access_token (matrix only)")
+	accessToken := flags.String("access-token", "", "access_token (matrix/twitch only)")
 	transport := flags.String("transport", "", "custom transport (for non-built-in types)")
-	endpoint := flags.String("endpoint", "", "endpoint (required for mattermost/irc/matrix/zulip/custom)")
+	endpoint := flags.String("endpoint", "", "endpoint (provider-specific server override)")
+	privateKey := flags.String("private-key", "", "private_key (nostr only; literal or $ENV_VAR)")
+	relays := flags.String("relays", "", "comma-separated relay URLs (nostr only)")
 	channels := flags.String("channels", "", "comma-separated channels")
 	authToken := flags.String("auth-token", "", "auth_token (twilio only)")
 	accountSID := flags.String("account-sid", "", "account_sid (twilio only)")
@@ -273,7 +277,7 @@ func runConfigAddBot(args []string) error {
 	apiKey := flags.String("api-key", "", "api_key (zulip only)")
 	botEmail := flags.String("bot-email", "", "bot_email (zulip only)")
 	dbPath := flags.String("db-path", "", "db_path (whatsapp/imessage only)")
-	password := flags.String("password", "", "password (irc only)")
+	password := flags.String("password", "", "password (irc/xmpp only)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -296,11 +300,15 @@ func runConfigAddBot(args []string) error {
 	cfg.Bots = append(cfg.Bots, config.BotConfig{
 		Name:          strings.TrimSpace(*name),
 		Type:          strings.TrimSpace(*botType),
+		Username:      strings.TrimSpace(*username),
+		JID:           strings.TrimSpace(*jid),
 		BotToken:      strings.TrimSpace(*botToken),
 		AppLevelToken: strings.TrimSpace(*appLevelToken),
 		AccessToken:   strings.TrimSpace(*accessToken),
 		Transport:     strings.TrimSpace(*transport),
 		Endpoint:      strings.TrimSpace(*endpoint),
+		PrivateKey:    strings.TrimSpace(*privateKey),
+		Relays:        splitCSV(*relays),
 		Channels:      splitCSV(*channels),
 		AuthToken:     strings.TrimSpace(*authToken),
 		AccountSID:    strings.TrimSpace(*accountSID),

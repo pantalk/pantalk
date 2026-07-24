@@ -39,7 +39,7 @@ type AttachmentSender interface {
 // Implemented by: telegram. Remaining connectors with a native equivalent
 // that should grow this: slack, discord, mattermost, matrix, whatsapp, irc
 // (via /me fallback is questionable - likely never), twilio (no equivalent),
-// zulip, imessage.
+// zulip, imessage. XMPP implements XEP-0085 chat states.
 type TypingIndicator interface {
 	Typing(ctx context.Context, request protocol.Request) error
 }
@@ -66,6 +66,12 @@ func NewConnector(bot config.BotConfig, publish func(protocol.Event), attachment
 		return NewWhatsAppConnector(bot, publish)
 	case "irc":
 		return NewIRCConnector(bot, publish)
+	case "xmpp":
+		return NewXMPPConnector(bot, publish)
+	case "twitch":
+		return NewTwitchConnector(bot, publish)
+	case "nostr":
+		return NewNostrConnector(bot, publish)
 	case "matrix":
 		return NewMatrixConnector(bot, publish)
 	case "twilio":
