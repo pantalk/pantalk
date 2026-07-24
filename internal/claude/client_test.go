@@ -99,6 +99,29 @@ func TestClientReportsUnsuccessfulResult(t *testing.T) {
 	}
 }
 
+func TestClientInjectsConfiguredEnvironment(t *testing.T) {
+	factory := func(ctx context.Context, _ string, args []string) (*exec.Cmd, error) {
+		helperArgs := append([]string{"-test.run=TestClaudeHelperProcess", "--"}, args...)
+		cmd := exec.CommandContext(ctx, os.Args[0], helperArgs...)
+		cmd.Env = append(os.Environ(), "GO_WANT_CLAUDE_HELPER_PROCESS=1")
+		return cmd, nil
+	}
+	client := newClient(Config{
+		Env: map[string]string{
+			"ANTHROPIC_BASE_URL":   "https://api.example.com/anthropic",
+			"ANTHROPIC_AUTH_TOKEN": "secret-token",
+		},
+	}, factory)
+
+	result, err := client.RunTurn(context.Background(), "", "env-check")
+	if err != nil {
+		t.Fatalf("env-check turn: %v", err)
+	}
+	if result.Text != "base_url=https://api.example.com/anthropic token=secret-token" {
+		t.Fatalf("child did not observe injected environment: %q", result.Text)
+	}
+}
+
 func TestNewRejectsMissingBinary(t *testing.T) {
 	_, err := New(Config{Binary: t.TempDir() + "/missing-claude"})
 	if err == nil || !strings.Contains(err.Error(), "find claude executable") {
@@ -146,6 +169,20 @@ func TestClaudeHelperProcess(t *testing.T) {
 		"subtype":    "init",
 		"session_id": sessionID,
 	})
+	if string(prompt) == "env-check" {
+		emitClaudeHelperMessage(map[string]any{
+			"type":     "result",
+			"subtype":  "success",
+			"is_error": false,
+			"result": fmt.Sprintf(
+				"base_url=%s token=%s",
+				os.Getenv("ANTHROPIC_BASE_URL"),
+				os.Getenv("ANTHROPIC_AUTH_TOKEN"),
+			),
+			"session_id": sessionID,
+		})
+		os.Exit(0)
+	}
 	if string(prompt) == "return-error" {
 		emitClaudeHelperMessage(map[string]any{
 			"type":       "result",

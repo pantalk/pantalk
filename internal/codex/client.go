@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pantalk/pantalk/internal/procenv"
 )
 
 const (
@@ -208,6 +210,8 @@ func start(ctx context.Context, cfg Config, factory commandFactory) (*Client, er
 		_ = stdin.Close()
 		return nil, fmt.Errorf("open codex app-server stdout: %w", err)
 	}
+
+	procenv.Apply(cmd, cfg.Env)
 
 	stderr := &tailBuffer{limit: stderrTailBytes}
 	if cfg.Stderr == nil {

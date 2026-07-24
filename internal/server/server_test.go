@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pantalk/pantalk/internal/acp"
 	"github.com/pantalk/pantalk/internal/agent"
 	"github.com/pantalk/pantalk/internal/claude"
 	"github.com/pantalk/pantalk/internal/codex"
@@ -921,6 +922,251 @@ func TestLocalMessageFlowsThroughClaudeRuntime(t *testing.T) {
 			return
 		case <-deadline.C:
 			t.Fatal("timed out waiting for native Claude reply")
+		}
+	}
+}
+
+// Environment overrides are an agent-level field, so every persistent driver
+// must receive them with $ENV_VAR references already resolved.
+func TestAgentEnvReachesEveryDriver(t *testing.T) {
+	agentEnv := map[string]string{
+		"HTTPS_PROXY":          "http://proxy.example.com:8080",
+		"ANTHROPIC_AUTH_TOKEN": "$BACKEND_API_KEY",
+	}
+	wantEnv := map[string]string{
+		"HTTPS_PROXY":          "http://proxy.example.com:8080",
+		"ANTHROPIC_AUTH_TOKEN": "backend-secret",
+	}
+
+	tests := []struct {
+		name  string
+		agent config.AgentConfig
+		// observe installs the driver's client factory and returns the env it
+		// was started with.
+		observe func(*Server) func() map[string]string
+	}{
+		{
+			name: "claude",
+			agent: config.AgentConfig{
+				Name: "env-agent", Driver: "claude", Timeout: 1, Env: agentEnv,
+			},
+			observe: func(s *Server) func() map[string]string {
+				var started claude.Config
+				s.startClaudeClient = func(cfg claude.Config) (agent.ClaudeClient, error) {
+					started = cfg
+					return &serverFakeClaudeClient{}, nil
+				}
+				return func() map[string]string { return started.Env }
+			},
+		},
+		{
+			name: "codex",
+			agent: config.AgentConfig{
+				Name: "env-agent", Driver: "codex", Timeout: 1, Env: agentEnv,
+			},
+			observe: func(s *Server) func() map[string]string {
+				var started codex.Config
+				s.startCodexClient = func(_ context.Context, cfg codex.Config) (agent.CodexClient, error) {
+					started = cfg
+					return &serverFakeCodexClient{}, nil
+				}
+				return func() map[string]string { return started.Env }
+			},
+		},
+		{
+			name: "acp",
+			agent: config.AgentConfig{
+				Name: "env-agent", Driver: "acp", Timeout: 1, Env: agentEnv,
+				Command: agent.Command{"kimi", "acp"},
+			},
+			observe: func(s *Server) func() map[string]string {
+				var started acp.Config
+				s.startACPClient = func(_ context.Context, cfg acp.Config) (agent.ACPClient, error) {
+					started = cfg
+					return &serverFakeACPClient{}, nil
+				}
+				return func() map[string]string { return started.Env }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			defer notificationStore.Close()
+
+			t.Setenv("BACKEND_API_KEY", "backend-secret")
+
+			cfg := config.Config{
+				Bots: []config.BotConfig{{
+					Name: "local-test",
+					Type: "local",
+					Agents: []config.BotAgentBinding{{
+						Agent: "env-agent",
+						When:  "notify",
+					}},
+				}},
+				Agents: []config.AgentConfig{tt.agent},
+			}
+			s := New(cfg, "", "", "")
+			s.rootCtx = context.Background()
+			s.notifications = notificationStore
+
+			startedEnv := tt.observe(s)
+			if err := s.startConnectors(cfg); err != nil {
+				t.Fatalf("start connectors: %v", err)
+			}
+			defer s.stopAgentRuntime()
+
+			got := startedEnv()
+			for key, want := range wantEnv {
+				if got[key] != want {
+					t.Fatalf("%s driver env[%s] = %q, want %q (full: %#v)", tt.name, key, got[key], want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveAgentEnvReportsUnsetVariable(t *testing.T) {
+	_, err := resolveAgentEnv(config.AgentConfig{
+		Name: "broken",
+		Env:  map[string]string{"TOKEN": "$PANTALK_DEFINITELY_UNSET_VAR"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "TOKEN") {
+		t.Fatalf("expected env resolution error naming the variable, got %v", err)
+	}
+}
+
+func TestResolveAgentEnvReturnsNilWhenUnset(t *testing.T) {
+	env, err := resolveAgentEnv(config.AgentConfig{Name: "plain"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env != nil {
+		t.Fatalf("env = %#v, want nil so the daemon environment is inherited", env)
+	}
+}
+
+type serverFakeACPClient struct {
+	mu      sync.Mutex
+	prompts []string
+	closed  bool
+}
+
+func (f *serverFakeACPClient) NewSession(context.Context, string) (acp.Session, error) {
+	return acp.Session{ID: "acp-local-session"}, nil
+}
+
+func (f *serverFakeACPClient) LoadSession(context.Context, string, string) error {
+	return nil
+}
+
+func (f *serverFakeACPClient) RunTurn(_ context.Context, _, prompt string) (acp.TurnResult, error) {
+	f.mu.Lock()
+	f.prompts = append(f.prompts, prompt)
+	f.mu.Unlock()
+	return acp.TurnResult{
+		SessionID:  "acp-local-session",
+		Text:       "native ACP reply",
+		StopReason: "end_turn",
+	}, nil
+}
+
+func (f *serverFakeACPClient) Close() error {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+	return nil
+}
+
+func TestLocalMessageFlowsThroughACPRuntime(t *testing.T) {
+	notificationStore, err := store.Open(filepath.Join(t.TempDir(), "pantalk.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer notificationStore.Close()
+
+	cfg := config.Config{
+		Bots: []config.BotConfig{{
+			Name: "local-test",
+			Type: "local",
+			Agents: []config.BotAgentBinding{{
+				Agent: "local-kimi",
+				When:  "notify",
+			}},
+		}},
+		Agents: []config.AgentConfig{{
+			Name:    "local-kimi",
+			Driver:  "acp",
+			Command: agent.Command{"kimi", "acp"},
+			Timeout: 1,
+			ACP: config.ACPAgentConfig{
+				Model:    "kimi-k3",
+				Approval: "approve",
+			},
+		}},
+	}
+	s := New(cfg, "", "", "")
+	s.rootCtx = context.Background()
+	s.notifications = notificationStore
+
+	fakeClient := &serverFakeACPClient{}
+	var startedWith acp.Config
+	s.startACPClient = func(_ context.Context, clientCfg acp.Config) (agent.ACPClient, error) {
+		startedWith = clientCfg
+		return fakeClient, nil
+	}
+	if err := s.startConnectors(cfg); err != nil {
+		t.Fatalf("start connectors: %v", err)
+	}
+	defer s.stopAgentRuntime()
+
+	if startedWith.Binary != "kimi" ||
+		len(startedWith.Args) != 1 || startedWith.Args[0] != "acp" ||
+		startedWith.Model != "kimi-k3" ||
+		startedWith.Approval != "approve" {
+		t.Fatalf("unexpected acp client config: %#v", startedWith)
+	}
+
+	subscriptions := s.subscribe([]string{"local:local-test"})
+	defer s.unsubscribe([]string{"local:local-test"}, subscriptions)
+
+	resp := s.handleRequest(context.Background(), protocol.Request{
+		Action: protocol.ActionInject,
+		Bot:    "local-test",
+		User:   "alice",
+		Target: "user:alice",
+		Text:   "please investigate",
+	})
+	if !resp.OK {
+		t.Fatalf("inject failed: %s", resp.Error)
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-subscriptions[0]:
+			if event.Kind != "message" || event.Direction != "out" {
+				continue
+			}
+			if event.Text != "native ACP reply" {
+				t.Fatalf("unexpected outbound reply: %+v", event)
+			}
+
+			fakeClient.mu.Lock()
+			prompts := append([]string(nil), fakeClient.prompts...)
+			fakeClient.mu.Unlock()
+			if len(prompts) != 1 || prompts[0] != "please investigate" {
+				t.Fatalf("unexpected ACP prompts: %v", prompts)
+			}
+			return
+		case <-deadline.C:
+			t.Fatal("timed out waiting for native ACP reply")
 		}
 	}
 }

@@ -102,15 +102,17 @@ type BotAgentBinding struct {
 // driver, workdir, and instruction settings.
 type AgentConfig struct {
 	Name         string            `yaml:"name"`
-	Driver       string            `yaml:"driver"`       // command (default when command is set), codex, or claude
-	Command      agent.Command     `yaml:"command"`      // command driver only; exec'd directly, never via shell
+	Driver       string            `yaml:"driver"`       // command (default when command is set), codex, claude, or acp
+	Command      agent.Command     `yaml:"command"`      // command and acp drivers; exec'd directly, never via shell
 	Workdir      string            `yaml:"workdir"`      // working directory (optional)
 	Instructions string            `yaml:"instructions"` // persistent-agent developer instructions
+	Env          map[string]string `yaml:"env"`          // appended to the agent process environment; $ENV_VAR values are resolved
 	Buffer       int               `yaml:"buffer"`       // command driver: batch window in seconds (default 30)
 	Timeout      int               `yaml:"timeout"`      // max command/turn runtime in seconds
 	Cooldown     int               `yaml:"cooldown"`     // command driver: min seconds between runs (default 60)
 	Codex        CodexAgentConfig  `yaml:"codex"`        // codex driver overrides; omitted values inherit local Codex config
 	Claude       ClaudeAgentConfig `yaml:"claude"`       // claude driver overrides; omitted values inherit local Claude Code config
+	ACP          ACPAgentConfig    `yaml:"acp"`          // acp driver overrides for the agent named by command
 }
 
 // CodexAgentConfig contains optional native app-server overrides. Authentication
@@ -133,6 +135,15 @@ type ClaudeAgentConfig struct {
 	PermissionMode  string   `yaml:"permission_mode"`
 	AllowedTools    []string `yaml:"allowed_tools"`
 	DisallowedTools []string `yaml:"disallowed_tools"`
+}
+
+// ACPAgentConfig contains optional overrides for an agent driven over the
+// Agent Client Protocol. The agent itself is named by the definition's
+// command (for example `kimi acp`); authentication and all omitted settings
+// are inherited from that agent's local installation.
+type ACPAgentConfig struct {
+	Model    string `yaml:"model"`    // optional; otherwise the agent's local default
+	Approval string `yaml:"approval"` // tool permission requests: reject (default), approve, or approve-for-session
 }
 
 func ResolveCredential(value string) (string, error) {
@@ -379,6 +390,19 @@ func validate(cfg Config, allowExec bool) error {
 		}
 		seenAgents[a.Name] = struct{}{}
 
+		// Environment overrides apply to every driver's agent process.
+		for key, value := range a.Env {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("agent %q: env contains an empty variable name", a.Name)
+			}
+			if strings.ContainsAny(key, "=\x00") {
+				return fmt.Errorf("agent %q: env variable name %q contains an invalid character", a.Name, key)
+			}
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("agent %q: env %s has an empty value", a.Name, key)
+			}
+		}
+
 		driver := strings.TrimSpace(a.Driver)
 		if driver == "" && len(a.Command) > 0 {
 			driver = "command"
@@ -394,7 +418,7 @@ func validate(cfg Config, allowExec bool) error {
 			// --allow-exec. Commands are executed directly, never by a shell.
 			binary := filepath.Base(a.Command[0])
 			if !allowExec && !agent.AllowedCommands[binary] {
-				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini, kimi); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
 			}
 		case "codex":
 			if len(a.Command) > 0 {
@@ -419,10 +443,26 @@ func validate(cfg Config, allowExec bool) error {
 			default:
 				return fmt.Errorf("agent %q: unsupported claude permission_mode %q", a.Name, a.Claude.PermissionMode)
 			}
+		case "acp":
+			if len(a.Command) == 0 {
+				return fmt.Errorf("agent %q: acp driver requires command naming the agent, e.g. \"kimi acp\"", a.Name)
+			}
+
+			// The acp driver executes the configured agent directly, so the
+			// command-driver allowlist applies unless --allow-exec.
+			binary := filepath.Base(a.Command[0])
+			if !allowExec && !agent.AllowedCommands[binary] {
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini, kimi); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+			}
+			switch a.ACP.Approval {
+			case "", "reject", "approve", "approve-for-session":
+			default:
+				return fmt.Errorf("agent %q: unsupported acp approval %q (use reject, approve, or approve-for-session)", a.Name, a.ACP.Approval)
+			}
 		case "":
 			return fmt.Errorf("agent %q requires driver or command", a.Name)
 		default:
-			return fmt.Errorf("agent %q: unsupported driver %q (use command, codex, or claude)", a.Name, driver)
+			return fmt.Errorf("agent %q: unsupported driver %q (use command, codex, claude, or acp)", a.Name, driver)
 		}
 	}
 

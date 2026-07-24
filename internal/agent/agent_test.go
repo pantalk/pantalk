@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -1444,5 +1446,37 @@ func TestEveryFunc_Direct(t *testing.T) {
 	}
 	if result {
 		t.Error("expected no match at 9:07 for 15m interval")
+	}
+}
+
+// The command driver runs its agent as a child process, so configured
+// environment overrides must reach that process alongside the inherited
+// daemon environment.
+func TestRunnerPassesEnvToCommandProcess(t *testing.T) {
+	t.Setenv("PANTALK_INHERITED_VAR", "inherited")
+
+	outputPath := filepath.Join(t.TempDir(), "env.txt")
+	r, err := NewRunner(Config{
+		Name: "env-agent",
+		Command: Command{
+			"/bin/sh", "-c",
+			`printf '%s,%s' "$PANTALK_OVERRIDE_VAR" "$PANTALK_INHERITED_VAR" > ` + outputPath,
+		},
+		Env:     map[string]string{"PANTALK_OVERRIDE_VAR": "override"},
+		Buffer:  1,
+		Timeout: 10,
+	})
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	r.run(1)
+
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read command output: %v", err)
+	}
+	if got := string(written); got != "override,inherited" {
+		t.Fatalf("child environment = %q, want \"override,inherited\"", got)
 	}
 }
