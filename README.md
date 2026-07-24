@@ -5,33 +5,46 @@
 <h1 align="center">Pantalk</h1>
 
 <p align="center">
-  <strong>Give your AI agent a voice on every chat platform.</strong><br/>
-  A lightweight daemon that lets AI agents send, receive, and stream messages across local test conversations, Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, and Zulip through a single interface.
+  <strong>Any agent, any chat.</strong><br/>
+  A daemon that puts the coding agent you already run - Claude Code, Codex, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, SMS, and Zulip. Nothing is welded together, so you pick both ends and can change either one later.
 </p>
 
 <p align="center">
-  <a href="https://pantalk.dev">Website</a> · <a href="https://pantalk.dev/about">About</a> · <a href="#quick-start">Quick Start</a> · <a href="#docker">Docker</a> · <a href="#platform-setup">Platform Setup</a>
+  <a href="https://pantalk.dev">Website</a> · <a href="#what-you-get-out-of-it">Use Cases</a> · <a href="#quick-start">Quick Start</a> · <a href="#pantalk-station">Station</a> · <a href="#docker">Docker</a> · <a href="#platform-setup">Platform Setup</a>
 </p>
 
 ---
 
 ## The Problem
 
-AI agents need to communicate with humans where they already are - Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio, Zulip. But every platform speaks a different protocol. Building an agent that can participate in conversations across all of them means writing and maintaining separate integrations before your agent can even say "hello."
+Putting an agent into chat is a solved problem - once, for one pair. Anthropic's
+Claude tag puts Claude in Slack. Block's [Buzz](https://github.com/block/buzz)
+puts Block's agents in Block's workspace. Both are good products, and both
+decide the pair for you: one harness, welded to one platform.
+
+That is the wrong shape. Harnesses turn over fast - the one you standardized on
+last quarter is not the one you want in this repo today. Platforms don't turn
+over at all - your colleagues are in Slack, your customers are on WhatsApp,
+your on-call gets SMS, and the community you support has never left IRC. Wiring
+a specific harness to a specific platform means rewriting the integration every
+time either end moves.
 
 ## The Solution
 
-Pantalk gives your AI agent a single, consistent interface to all chat platforms. One daemon (`pantalkd`) handles the upstream complexity - auth, sessions, reconnects, rate limits - while your agent talks through simple CLI commands or a Unix domain socket with a JSON protocol.
+Pantalk keeps the two ends separate and makes both of them pluggable.
+
+Harnesses plug in on one edge. Platforms plug in on the other. `pantalkd` sits
+in the middle and is the only thing that knows about either, so the matrix is
+YAML rather than integration code:
 
 ```mermaid
 graph TD
-    Agent["Your AI Agent<br/><em>(any language, any framework)</em>"]
-    Agent -->|send| Socket
-    Agent -->|history| Socket
-    Agent -->|notify| Socket
-    Agent -->|stream| Socket
-    Socket["Unix Domain Socket<br/><em>(JSON protocol)</em>"]
-    Socket --> Daemon["pantalkd<br/><em>(daemon)</em>"]
+    Claude["Claude Code"] --> Daemon
+    Codex["Codex"] --> Daemon
+    Gemini["Gemini CLI"] --> Daemon
+    Goose["Goose · OpenCode · Aider · Copilot"] --> Daemon
+    Any["Any CLI, any language<br/><em>(Unix socket, JSON)</em>"] --> Daemon
+    Daemon["pantalkd<br/><em>one daemon, one protocol</em>"]
     Daemon --> Slack
     Daemon --> Discord
     Daemon --> Mattermost
@@ -39,12 +52,117 @@ graph TD
     Daemon --> WhatsApp
     Daemon --> IRC
     Daemon --> Matrix
-    Daemon --> Twilio
+    Daemon --> Twilio["Twilio / SMS"]
     Daemon --> Zulip
     Daemon --> More["..."]
 ```
 
-## Why Pantalk
+The result is what a Claude tag or a Buzz gives you - an agent that is a real
+participant in the conversation, mentionable, threaded, with history - except
+you choose both ends. Point Claude Code at Slack, Codex at Telegram, and Gemini
+CLI at IRC from the same config, and change any one of those by editing a
+`driver:` line.
+
+## What You Get Out Of It
+
+Pluggability is the mechanism. These are the reasons to care.
+
+### 1. Ship code from a chat thread
+
+Claude Code and Codex already open PRs, fix failing tests, and review diffs.
+They just do it in a terminal only one person can see. Bind one to a channel and
+the work happens where it was asked for - someone requests a fix in
+`#engineering`, the PR link comes back in the same thread, and the whole team
+watched it happen.
+
+```yaml
+agents:
+  - name: engineering
+    driver: claude
+    workdir: /workspace/project
+    claude:
+      permission_mode: acceptEdits
+
+bots:
+  - name: company-slack
+    type: slack
+    agents:
+      - agent: engineering
+        when: true
+```
+
+The harness keeps your repo, your sandbox settings, and your approval policy.
+Pantalk only decides which conversations reach it.
+
+### 2. Agents that act on incidents
+
+Point an agent at the channel your on-call already watches. It triages, works
+the runbook, and reports back - and because Twilio and WhatsApp are just other
+connectors, it can reach a phone that has nothing installed on it.
+
+```yaml
+bots:
+  - name: ops-slack
+    type: slack
+    agents:
+      - agent: engineering
+        when: 'channel == "#incidents"'
+
+  - name: oncall-sms
+    type: twilio
+    agents:
+      - agent: engineering
+        when: direct
+
+      - name: morning-brief
+        agent: engineering
+        when: 'at("08:00") && weekday in ["mon","tue","wed","thu","fri"]'
+        timezone: Europe/London
+        prompt: |
+          Summarize overnight alerts and open incidents.
+```
+
+Ordered `when:` bindings decide what escalates and what gets handled quietly.
+Scheduled prompts let the same agent post a summary before anyone opens a
+laptop. See [`docs/agents.md`](docs/agents.md).
+
+### 3. One subscription, whole team
+
+This one is worth stating plainly: **you do not need a seat per person.**
+
+`pantalkd` runs one authenticated Claude Code or Codex install. Everyone else
+reaches it by DM or mention from the chat client they already have open. No
+per-person license, no local install, no terminal.
+
+```yaml
+bots:
+  - name: team-assistant
+    type: slack
+    agents:
+      - agent: engineering
+        when: direct # every teammate's DM, one shared harness
+```
+
+Sessions are keyed by service, bot, channel, thread, **and user**, so each
+teammate gets an isolated conversation - nobody inherits anyone else's context.
+Designers, PMs, and support get the same assistant as the engineers, without
+ever touching a CLI.
+
+---
+
+## Complete Pluggability
+
+|                   | Harness-specific product       | Pantalk                                            |
+| ----------------- | ------------------------------ | -------------------------------------------------- |
+| **The pair**      | Chosen for you                 | You choose both ends, independently                |
+| **Swap harness**  | Migrate to another product     | Change `driver:` in YAML                           |
+| **Swap platform** | Wait for the vendor to ship it | Change `type:` in YAML                             |
+| **Many at once**  | One agent, one platform        | N harnesses × M platforms, one daemon              |
+| **Adoption cost** | Your team moves or installs    | Nothing changes for anyone                         |
+| **Reach**         | The supported platform         | Ten platforms, including phone numbers with no app |
+
+And beneath that, the plumbing every one of those pairings would otherwise make
+you rebuild:
 
 |                        | Without Pantalk            | With Pantalk                  |
 | ---------------------- | -------------------------- | ----------------------------- |
@@ -54,6 +172,27 @@ graph TD
 | **Notifications**      | Build your own routing     | `notifications --unseen`      |
 | **Real-time events**   | WebSocket/Gateway/polling  | `stream --bot name`           |
 | **Composability**      | Library lock-in            | Pipe to `grep`, `jq`, `xargs` |
+
+## Supported Harnesses
+
+Native drivers own a persistent session and derive a durable thread per
+conversation. The `command` driver runs any other harness fire-and-forget.
+
+| Harness           | Driver                     | Notes                                          |
+| ----------------- | -------------------------- | ---------------------------------------------- |
+| **Claude Code**   | `claude` native            | Reuses local auth/config, resumes sessions     |
+| **Codex**         | `codex` native             | Persistent `app-server`, durable Codex threads |
+| **Copilot**       | `command`                  | Allowlisted by default                         |
+| **Gemini CLI**    | `command`                  | Allowlisted by default                         |
+| **Goose**         | `command`                  | Allowlisted by default                         |
+| **OpenCode**      | `command`                  | Allowlisted by default                         |
+| **Aider**         | `command`                  | Allowlisted by default                         |
+| **Anything else** | `command` + `--allow-exec` | Or drive the socket directly from any language |
+
+Every harness in that table reaches every platform in the next one. See
+[`docs/agents.md`](docs/agents.md) for the full driver reference, and
+[Pantalk Station](#pantalk-station) for a working example you can boot in one
+command.
 
 ## Supported Platforms
 
@@ -81,16 +220,39 @@ graph TD
 
 Normal client commands connect to `pantalkd` through a **Unix domain socket**
 using a simple JSON protocol. `pantalk local` embeds the same server and still
-uses that socket protocol internally. AI agents and LLM tools can send,
-receive, and stream chat messages without embedding a provider SDK.
+uses that socket protocol internally. Any agentic harness can send, receive, and
+stream chat messages without embedding a provider SDK - and without the platform
+knowing which harness is on the other end.
 
 ### Design Principles
 
-- **Agent-first** - structured output, skill definitions, and notification routing designed for AI agents
+- **Both ends pluggable** - harnesses attach through drivers, platforms through connectors; neither knows about the other
+- **Agent-first** - structured output, skill definitions, and notification routing designed for agentic harnesses
 - **One daemon, all platforms** - upstream auth/session complexity lives in `pantalkd`
 - **Composable CLI** - JSON over Unix socket, works with `grep`, `jq`, `xargs`, and any language
 - **Multi-bot** - define multiple bots per service via config
 - **Local-first** - SQLite persistence, no external dependencies
+
+## Pantalk Station
+
+[Pantalk Station](https://github.com/pantalk/station) is the reference showcase:
+a browser-accessible Linux desktop with Pantalk, Codex, and Claude Code already
+installed and registered as agents. It exists to make the pluggability concrete -
+boot it, log into a harness, pick a deployment, and an agent is live in a real
+chat server minutes later.
+
+```bash
+docker run --detach \
+  --name pantalk-station \
+  --shm-size 1g \
+  --publish 127.0.0.1:6902:6901 \
+  ghcr.io/pantalk/station:latest
+```
+
+Open <http://127.0.0.1:6902>. Station ships transport-neutral on purpose: the
+messaging system is a deployment recipe, not part of the image. Bring up
+Mattermost or an Ergo IRC server alongside it with one command, and swap which
+harness answers by editing one line of Pantalk config.
 
 ## Docker
 
@@ -128,9 +290,10 @@ docker run --detach \
 ```
 
 The image runs `pantalkd` as an unprivileged user and includes both `pantalk`
-and `pantalkd`. Native Codex and Claude agents still require their respective
-runtimes and authentication. Extend the image with those runtimes or use
-Pantalk Station when a complete graphical agent environment is preferred.
+and `pantalkd`. Harnesses still require their own runtimes and authentication.
+Extend the image with the harness you want, or use
+[Pantalk Station](#pantalk-station), which ships Codex and Claude Code already
+installed and registered.
 
 ## Quick Start
 
@@ -176,6 +339,9 @@ pantalk local --driver claude --workdir .
 
 This reuses the installed Claude Code authentication and configuration,
 defaults to `plan` permissions, and resumes the Claude session on later turns.
+One flag is the whole difference - the routing, history, notification, and
+streaming pipeline underneath is identical, and the same substitution works when
+the conversation is happening in Slack instead of your terminal.
 
 To test the connector separately or attach it to a larger configuration,
 configure a credential-free local bot:
@@ -198,21 +364,34 @@ pipeline as provider connectors, but never makes network calls and never echoes
 outbound messages back as inbound messages. See
 [`docs/local-connector.md`](docs/local-connector.md).
 
-Agent runtimes are reusable definitions. Each bot owns an ordered list of
-`when` bindings; the first matching binding handles an inbound message:
+Agent runtimes are reusable definitions, independent of any platform. Each bot
+owns an ordered list of `when` bindings; the first matching binding handles an
+inbound message. This is where pluggability becomes concrete - the harnesses are
+declared once on one side, the platforms once on the other, and the bindings
+between them are the only thing you edit:
 
 ```yaml
 agents:
   - name: engineering
-    driver: codex
+    driver: codex # swap to claude, or to command: for any other harness
+    workdir: /workspace/project
+
+  - name: reviewer
+    driver: claude
     workdir: /workspace/project
 
 bots:
-  - name: local-test
-    type: local
+  - name: company-slack # same two harnesses...
+    type: slack
     agents:
+      - agent: reviewer
+        when: 'channel == "#code-review"'
       - agent: engineering
-        when: direct
+        when: true
+
+  - name: oncall-sms # ...reachable from a phone, unchanged
+    type: twilio
+    agents:
       - agent: engineering
         when: true
 ```
@@ -275,7 +454,7 @@ pantalk stream --bot my-bot --notify
 pantalk stream --bot my-bot --notify --timeout 120
 ```
 
-> **Tip:** JSON output is automatic when stdout is not a terminal (e.g. when called by an AI agent). Use `--json` to force it in interactive mode.
+> **Tip:** JSON output is automatic when stdout is not a terminal (e.g. when called by a harness). Use `--json` to force it in interactive mode.
 
 ### 4. Manage config on the fly
 
@@ -401,7 +580,7 @@ A message that arrives with files but no text is stored with empty text; `histor
 
 ## Agent Notifications
 
-Pantalk surfaces events relevant to the agent via `notifications`. This is designed for AI agents that need to know when they're being talked to.
+Pantalk surfaces events relevant to the agent via `notifications`. This is designed for harnesses that need to know when they're being talked to, and the rule is the same on every platform.
 
 ### Notification behavior
 
@@ -451,18 +630,21 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ## Integrations
 
-| Integration | Guide                                          | Description                                                                                           |
-| ----------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Agents      | [Agents](docs/agents.md)                       | Launch AI agents automatically when matching notifications arrive                                     |
-| Claude Code | [Claude Code Hooks](docs/claude-code-hooks.md) | Use pantalk as a hook to forward notifications, check chat on stop, and load context on session start |
+| Integration | Guide                                                 | Description                                                                                           |
+| ----------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Agents      | [Agents](docs/agents.md)                              | Bind any harness to any bot - drivers, `when:` routing, and scheduled prompts                         |
+| Claude Code | [Claude Agent](docs/claude-agent.md)                  | Native Claude Code driver - persistent sessions, permission modes, tool allowlists                    |
+| Codex       | [Codex Agent](docs/codex-agent.md)                    | Native Codex driver - persistent app-server, sandbox and approval policy                              |
+| Claude Code | [Claude Code Hooks](docs/claude-code-hooks.md)        | Use pantalk as a hook to forward notifications, check chat on stop, and load context on session start |
+| Station     | [Pantalk Station](https://github.com/pantalk/station) | Prebuilt desktop with Pantalk, Codex, and Claude Code wired up - the fastest way to see it work       |
 
 ---
 
 ## Comparisons
 
-| Compared to                           | Guide                                      | In short                                                                                                                                                |
-| ------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both give agents a unified, addressable event stream. Buzz consolidates your team into one workspace; Pantalk federates the platforms they already use. |
+| Compared to                           | Guide                                      | In short                                                                                                                                                                      |
+| ------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both make an agent a real participant in team conversation. Buzz pairs its own agents with its own workspace; Pantalk leaves both ends open and bridges what you already use. |
 
 ---
 
@@ -478,7 +660,9 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ## See Also
 
-**[MCPShim](https://github.com/mcpshim/mcpshim)** - Use any MCP server as a standard CLI command. Pantalk gives your agent a voice; MCPShim gives it tools. Together they form a complete agent infrastructure stack.
+**[Pantalk Station](https://github.com/pantalk/station)** - A browser-accessible desktop with Pantalk, Codex, and Claude Code preinstalled, plus one-command deployments that stand up a real chat server next to it. The showcase for how little work this actually is.
+
+**[MCPShim](https://github.com/mcpshim/mcpshim)** - Use any MCP server as a standard CLI command. Pantalk plugs your harness into the platforms people talk on; MCPShim plugs tools into the harness. Together they form a complete agent infrastructure stack.
 
 ---
 

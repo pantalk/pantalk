@@ -8,6 +8,11 @@ received the message.
 This is different from the `command` driver: it does not launch a fresh CLI
 command for every notification and does not require Codex to poll Pantalk.
 
+Nothing below is platform-specific. The same agent definition works whether the
+conversation arrives from Slack, WhatsApp, SMS, IRC, or a local test connector,
+and replacing `driver: codex` with `driver: claude` leaves every one of those
+connections untouched.
+
 ## Zero-config local test
 
 From the repository you want Codex to use:

@@ -1,13 +1,21 @@
 # Agents
 
-Pantalk separates reusable agent definitions from bot-specific routing.
+Pantalk separates reusable agent definitions from bot-specific routing. This
+separation is the mechanism behind Pantalk's central claim: harnesses and
+platforms are declared in different blocks that never reference each other, so
+either can be replaced without touching the other.
 
-- Top-level `agents` describe how Codex, Claude Code, or a command starts.
+- Top-level `agents` describe how a harness starts - Codex, Claude Code, or any
+  other agent CLI through the `command` driver. Nothing here names a platform.
 - Each bot contains an ordered `agents` list describing when it uses those
-  definitions.
+  definitions. Nothing in a bot names a harness beyond the binding itself.
 - One agent runtime can serve multiple bots and conversations.
 - Persistent sessions remain isolated by agent, service, bot, DM, channel, and
   thread.
+
+Changing which harness answers a conversation is a one-line edit followed by
+`pantalk reload`. [Pantalk Station](https://github.com/pantalk/station) ships
+Codex and Claude Code preinstalled so you can try that swap immediately.
 
 ## Complete example
 
