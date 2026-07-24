@@ -190,6 +190,55 @@ func TestPublishUsesFirstMatchingBotBinding(t *testing.T) {
 	}
 }
 
+// Connectors emit ambient events alongside conversation: status on connect,
+// heartbeats, and - from XMPP - contact presence and XEP-0085 typing states.
+// None of them may start an agent turn, even for a catch-all binding, or a
+// contact simply typing in a DM would spawn a harness run per keystroke.
+func TestPublishDoesNotRouteNonMessageEventsToAgents(t *testing.T) {
+	catchAll := &serverFakeRuntime{name: "catch-all"}
+	matcher, err := agent.NewMatcher("catch-all", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(config.Config{}, "", "", "")
+	s.bots["xmpp:bot"] = protocol.BotRef{Service: "xmpp", Name: "bot"}
+	s.bindingsByBot["xmpp:bot"] = []*agentBinding{
+		{name: "catch-all", agent: "catch-all", matcher: matcher, runtime: catchAll},
+	}
+
+	ambient := []protocol.Event{
+		{Kind: "presence", Direction: "in", Target: "dm:alice@example.com", Channel: "dm:alice@example.com", User: "alice@example.com", Text: "away"},
+		{Kind: "typing", Direction: "in", Target: "dm:alice@example.com", Channel: "dm:alice@example.com", User: "alice@example.com", Text: "composing"},
+		{Kind: "status", Direction: "system", Text: "connector online"},
+		{Kind: "heartbeat", Direction: "system", Text: "alive"},
+	}
+	for _, event := range ambient {
+		event.Service = "xmpp"
+		event.Bot = "bot"
+		s.publish(event)
+	}
+
+	if got := len(catchAll.eventSnapshot()); got != 0 {
+		t.Fatalf("ambient events reached the agent: %d turns started", got)
+	}
+
+	// A real message on the same route still routes.
+	s.publish(protocol.Event{
+		Service:   "xmpp",
+		Bot:       "bot",
+		Kind:      "message",
+		Direction: "in",
+		Target:    "dm:alice@example.com",
+		Channel:   "dm:alice@example.com",
+		User:      "alice@example.com",
+		Text:      "hello",
+	})
+	if got := len(catchAll.eventSnapshot()); got != 1 {
+		t.Fatalf("expected 1 agent turn for the message, got %d", got)
+	}
+}
+
 func TestDispatchTickRunsEveryDueBindingWithCompleteEvents(t *testing.T) {
 	first := &serverFakeRuntime{name: "first"}
 	second := &serverFakeRuntime{name: "second"}
@@ -337,26 +386,35 @@ func TestMentionsAgent_EmptyBot(t *testing.T) {
 func TestIsDirectToAgent(t *testing.T) {
 	tests := []struct {
 		name    string
+		service string
 		target  string
 		channel string
 		kind    string
 		want    bool
 	}{
-		{"dm prefix", "dm:user123", "", "", true},
-		{"direct prefix", "direct:user123", "", "", true},
-		{"user prefix", "user:someone", "", "", true},
-		{"channel prefix", "channel:C1", "", "", false},
-		{"slack DM channel", "", "D0123456", "", true},
-		{"slack DM channel lower", "", "d0123456", "", true},
-		{"normal channel", "", "C0123456", "", false},
-		{"dm kind", "", "", "dm", true},
-		{"message kind", "", "", "message", false},
-		{"no indicators", "", "", "", false},
+		{"dm prefix", "", "dm:user123", "", "", true},
+		{"direct prefix", "", "direct:user123", "", "", true},
+		{"user prefix", "", "user:someone", "", "", true},
+		{"channel prefix", "", "channel:C1", "", "", false},
+		{"slack DM channel", "slack", "", "D0123456", "", true},
+		{"slack DM channel lower", "slack", "", "d0123456", "", true},
+		{"normal channel", "slack", "", "C0123456", "", false},
+		{"dm kind", "", "", "", "dm", true},
+		{"message kind", "", "", "", "message", false},
+		{"no indicators", "", "", "", "", false},
+
+		// The "D" prefix identifies a DM on Slack only. Other connectors put
+		// human-readable names in Channel, where a leading D means nothing.
+		{"xmpp room starting with d", "xmpp", "room:dev@conference.example.com", "dev@conference.example.com", "message", false},
+		{"xmpp room docs", "xmpp", "room:docs@conference.example.com", "docs@conference.example.com", "message", false},
+		{"xmpp dm still direct", "xmpp", "dm:alice@example.com", "dm:alice@example.com", "message", true},
+		{"zulip stream named design", "zulip", "channel:design", "design", "message", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := protocol.Event{
+				Service: tt.service,
 				Target:  tt.target,
 				Channel: tt.channel,
 				Kind:    tt.kind,

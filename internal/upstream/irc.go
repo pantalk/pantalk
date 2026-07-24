@@ -330,9 +330,31 @@ func (c *IRCConnector) sendRaw(line string) {
 		return
 	}
 
-	if _, err := fmt.Fprintf(conn, "%s\r\n", line); err != nil {
+	if _, err := fmt.Fprintf(conn, "%s\r\n", sanitizeIRCLine(line)); err != nil {
 		log.Printf("[irc:%s] send error: %v", c.botName, err)
 	}
+}
+
+// sanitizeIRCLine neutralizes embedded line terminators. CR and LF each end an
+// IRC command, so any of them surviving into a written line would let the
+// remainder be parsed as a separate command. Both the message body and the
+// channel name originate outside the connector - an agent's reply text, or a
+// channel named in a send request - which makes this the injection boundary.
+// NUL is stripped for the same reason: it terminates the line on some servers.
+func sanitizeIRCLine(line string) string {
+	if !strings.ContainsAny(line, "\r\n\x00") {
+		return line
+	}
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\r', '\n':
+			return ' '
+		case '\x00':
+			return -1
+		default:
+			return r
+		}
+	}, line)
 }
 
 func (c *IRCConnector) joinChannels() {

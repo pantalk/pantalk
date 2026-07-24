@@ -4,7 +4,7 @@
 
 **Buzz consolidates.** It gives you a new workspace where humans and agents are both first-class members, and asks your team to move there.
 
-**Pantalk federates.** It leaves your team exactly where they are and bridges the ten platforms they already use into one agent-addressable stream.
+**Pantalk federates.** It leaves your team exactly where they are and bridges the thirteen platforms they already use into one agent-addressable stream.
 
 Both give an agent a unified event stream, a way to be mentioned, and a runner that launches it on demand. The difference is whether that unification happens by **moving people** or by **bridging platforms**.
 
@@ -34,7 +34,7 @@ graph TD
     Daemon --> Slack2[Slack]
     Daemon --> WhatsApp2[WhatsApp]
     Daemon --> Telegram2[Telegram]
-    Daemon --> More2["+ 7 more platforms"]
+    Daemon --> More2["+ 10 more platforms"]
 ```
 
 ---
@@ -45,7 +45,7 @@ graph TD
 | --------------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
 | **Model**             | A workspace you host and join                            | A daemon that bridges platforms you already use               |
 | **Adoption cost**     | Your team migrates                                        | Nothing changes for anyone                                     |
-| **Reach**             | People inside the Buzz workspace                          | Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, Matrix, Twilio/SMS, Zulip, iMessage |
+| **Reach**             | People inside the Buzz workspace                          | Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, Twilio/SMS, Zulip, iMessage |
 | **Infrastructure**    | Relay + Postgres + Redis + Typesense                      | One binary, SQLite, no external services                      |
 | **Runs on**           | A server you operate                                      | Your laptop, a VPS, or a container                            |
 | **Protocol**          | Nostr (NIP-01/29/42), signed events                       | Each platform's native protocol, normalized                   |
@@ -73,7 +73,7 @@ If you can move your team, and you want one audited log for everything, Buzz is 
 ## What Pantalk Does That Buzz Doesn't
 
 - **Meets humans where they already are.** This is the whole thesis. The hardest part of agent adoption is not the agent - it is getting people to change where they talk. Pantalk's adoption cost is zero: your colleagues keep using Slack, your customers keep using WhatsApp, your on-call keeps getting SMS.
-- **Ten platforms, one interface.** One reusable agent definition can be bound by multiple bots. A single runtime can be mentioned in Slack, DM'd on Telegram, and texted over Twilio while each conversation keeps an isolated session.
+- **Thirteen platforms, one interface.** One reusable agent definition can be bound by multiple bots. A single runtime can be mentioned in Slack, DM'd on Telegram or Nostr, and texted over Twilio while each conversation keeps an isolated session.
 - **Neither end is welded.** The harness is a `driver:` line and the platform is a `type:` line, and they are declared in separate blocks that never reference each other. Route `#code-review` to Claude Code and everything else to Codex; replace both next quarter without re-doing a single platform integration. There is a working example of exactly this in [Pantalk Station](https://github.com/pantalk/station), which ships both harnesses preinstalled and swaps the messaging system with a deployment recipe.
 - **Reachable from a phone with no app.** WhatsApp, SMS, and iMessage mean your agent is reachable by anyone with a phone number, including people who will never install anything.
 - **No infrastructure.** A single binary and a SQLite file. No Postgres, no Redis, no search cluster, no server to operate.
@@ -93,18 +93,20 @@ They are not really competing for the same slot. Buzz is where your team could w
 
 ---
 
-## Could Pantalk Just Connect to Buzz?
+## Can Pantalk Connect to Buzz?
 
-Technically, yes - Buzz is a Nostr relay, and a `nostr` connector speaking NIP-01/29/42 would reach it like any other platform.
+Yes. Pantalk's `nostr` connector can join NIP-29 groups on a compatible relay, so a Buzz channel can be another place where a Pantalk-managed agent participates.
 
 But it would be the least useful connector in the set, because Buzz already ships Pantalk's core feature. Its ACP harness spawns an agent binary on mentions with a channel allowlist, turn timeouts, and dedup—the same job as Pantalk's per-bot agent bindings. Routing through Pantalk would also *downgrade* the agent, collapsing a native member with its own keypair and audit trail into a single relay identity forwarding text.
 
-The shape that would genuinely add something is the reverse: bridging a Buzz channel *out* to the Slack, WhatsApp, or SMS where everyone else is. That remains open.
+The shape that would genuinely add something is the reverse: automatically bridging a Buzz channel *out* to the Slack, WhatsApp, or SMS where everyone else is. Pantalk connects agents to each configured platform, but it does not relay arbitrary human messages between platforms, so that remains open.
 
 ---
 
 ## See Also
 
+- [Pantalk vs Claude Tag](pantalk-vs-claude-tag.md) - the same comparison against Anthropic's Slack-only agent
+- [Pantalk vs Codex in Slack](pantalk-vs-codex-slack.md) - the same comparison against OpenAI's Slack agent
 - [Agents](agents.md) - bind any harness to any bot with drivers and `when:` routing
 - [Claude Agent](claude-agent.md) / [Codex Agent](codex-agent.md) - the native harness drivers
 - [Claude Code Hooks](claude-code-hooks.md) - use Pantalk as a Claude Code hook

@@ -1361,7 +1361,7 @@ func (s *Server) publishEvent(event protocol.Event, selectedBinding *agentBindin
 	event.Self = botRef.BotID != "" && event.User == botRef.BotID
 	event.Mentions = mentionsAgent(event, botRef)
 	event.Direct = event.Direct || isDirectToAgent(event)
-	event.Notify = event.Direction == "in" && !event.Self &&
+	event.Notify = event.Kind == "message" && event.Direction == "in" && !event.Self &&
 		(event.Schedule != "" || event.Mentions || event.Direct || s.hasParticipation(key, event.Target, event.Channel, event.Thread))
 
 	if event.Kind == "status" {
@@ -1401,22 +1401,30 @@ func (s *Server) publishEvent(event protocol.Event, selectedBinding *agentBindin
 		}
 	}
 
-	// A scheduled rule has already selected its runtime. Normal inbound
-	// messages use ordered, first-match routing within their containing bot.
-	if selectedBinding != nil {
-		selectedBinding.runtime.Handle(event)
-	} else {
-		s.mu.RLock()
-		bindings := append([]*agentBinding(nil), s.bindingsByBot[key]...)
-		s.mu.RUnlock()
+	// Only conversation messages start an agent turn. Connectors also emit
+	// lifecycle and ambient events - status, heartbeat, and the presence and
+	// typing states XMPP reports - and those must never reach a harness: a
+	// binding written as `when: true` would otherwise spawn a turn for every
+	// reconnect or every keystroke a contact makes in a DM. Scheduled prompts
+	// are unaffected because dispatchTick publishes them as messages.
+	if event.Kind == "message" {
+		// A scheduled rule has already selected its runtime. Normal inbound
+		// messages use ordered, first-match routing within their containing bot.
+		if selectedBinding != nil {
+			selectedBinding.runtime.Handle(event)
+		} else {
+			s.mu.RLock()
+			bindings := append([]*agentBinding(nil), s.bindingsByBot[key]...)
+			s.mu.RUnlock()
 
-		for _, binding := range bindings {
-			if binding.matcher.Matches(event) {
-				if s.debug {
-					log.Printf("[%s] routed event %d to agent %s via binding %s", key, event.ID, binding.agent, binding.name)
+			for _, binding := range bindings {
+				if binding.matcher.Matches(event) {
+					if s.debug {
+						log.Printf("[%s] routed event %d to agent %s via binding %s", key, event.ID, binding.agent, binding.name)
+					}
+					binding.runtime.Handle(event)
+					break
 				}
-				binding.runtime.Handle(event)
-				break
 			}
 		}
 	}
@@ -1673,7 +1681,13 @@ func isDirectToAgent(event protocol.Event) bool {
 		return true
 	}
 
-	if strings.HasPrefix(strings.ToUpper(event.Channel), "D") {
+	// Slack is the only connector that leaves Direct unset and encodes the
+	// distinction in the channel ID, where DM conversations start with "D".
+	// Every other connector either prefixes the target or sets Direct itself,
+	// so applying this network-specific rule globally would misread ordinary
+	// channels whose names merely begin with the letter - an XMPP MUC such as
+	// dev@conference.example.com, or a Zulip stream named "design".
+	if event.Service == "slack" && strings.HasPrefix(strings.ToUpper(event.Channel), "D") {
 		return true
 	}
 

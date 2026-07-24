@@ -251,8 +251,9 @@ Schedules do not catch up occurrences missed while the daemon was offline.
 
 `when: direct` is provider-neutral. Slack `D…` conversations, Discord private
 channels, Telegram private chats, Mattermost direct channels, WhatsApp direct
-chats, Zulip private messages, SMS, iMessage DMs, and IRC private messages are
-normalized to the same expression field.
+chats, XMPP direct chats, Nostr NIP-17 DMs, Zulip private messages, SMS,
+iMessage DMs, and IRC private messages are normalized to the same expression
+field. Twitch supports channel chat but not direct messages.
 
 Provider `channels` lists remain ingress restrictions rather than agent
 routing. Direct messages are admitted independently where the provider clearly

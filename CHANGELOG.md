@@ -4,6 +4,32 @@ All notable changes to Pantalk are documented here, following [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-07-24
+
+### Added
+
+- Add XMPP/Jabber direct-message and multi-user-chat support over SASL and
+  StartTLS, including contact presence, XEP-0085 typing indicators, XEP-0199
+  server pings, and reporting of whether each configured room accepted the
+  join.
+- Add Twitch channel chat over IRC/TLS with IRCv3 tags, native replies, and
+  OAuth authentication. Outbound messages are paced to 20 per 30 seconds so a
+  multi-line agent reply does not trip Twitch's chat ban.
+- Add signed Nostr messaging through configurable relays, including NIP-17
+  direct messages, NIP-28 channels, and relay-scoped NIP-29 group chat.
+
+### Fixed
+
+- Only conversation messages start an agent turn. Connector lifecycle events -
+  status and heartbeat - no longer reach a harness, where a binding written as
+  `when: true` spawned a turn on every reconnect.
+- Treat a channel ID beginning with "D" as a direct message on Slack only.
+  Applied to every provider it misread any channel merely named with a leading
+  D, such as a Zulip stream named `design`, and answered every message in it as
+  though addressed to the bot.
+- Neutralize CR, LF, and NUL in outbound IRC protocol lines, so message text or
+  a channel name cannot inject additional IRC commands.
+
 ## [0.0.9] - 2026-07-23
 
 ### Added

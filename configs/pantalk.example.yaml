@@ -84,6 +84,31 @@ bots:
     channels:
       - '#mychannel'
 
+  - name: xmpp-bot
+    type: xmpp
+    jid: agent@example.com
+    password: $XMPP_PASSWORD
+    # endpoint: xmpp.example.com:5222     # optional: bypass DNS SRV discovery
+    channels:
+      - engineering@conference.example.com
+
+  - name: twitch-bot
+    type: twitch
+    username: pantalkbot
+    access_token: $TWITCH_ACCESS_TOKEN    # user token with chat:read + chat:edit
+    channels:
+      - pantalkdev
+
+  - name: nostr-bot
+    type: nostr
+    private_key: $NOSTR_PRIVATE_KEY
+    relays:
+      - wss://relay.example.com
+    channels:
+      - nip28:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      # NIP-29 groups are relay-scoped: <relay-url>'<group-id>
+      # - nip29:wss://relay.example.com'engineering
+
   - name: matrix-bot
     type: matrix
     access_token: $MATRIX_ACCESS_TOKEN
