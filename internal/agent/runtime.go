@@ -12,6 +12,7 @@ const (
 	agentFailureReplyTimeout = 30 * time.Second
 	codexFailureReply        = "The Codex agent could not respond. Check that Codex is installed and authenticated (`codex login status`), then review the Pantalk daemon logs."
 	claudeFailureReply       = "The Claude Code agent could not respond. Check that Claude Code is installed and authenticated (`claude auth status`), then review the Pantalk daemon logs."
+	acpFailureReply          = "The agent could not respond. Check that the configured ACP agent is installed and authenticated, then review the Pantalk daemon logs."
 )
 
 // Runtime is the common lifecycle used by command and persistent agent

@@ -24,6 +24,9 @@ type Config struct {
 	// Binary is the path or name of the Codex executable. It defaults to codex.
 	Binary string
 
+	// Env is appended to the inherited environment of the app-server process.
+	Env map[string]string
+
 	ClientName    string
 	ClientTitle   string
 	ClientVersion string

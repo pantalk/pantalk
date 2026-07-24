@@ -12,7 +12,9 @@ import (
 //
 // The child inherits the parent's environment, including the user's existing
 // Claude Code authentication, settings, CLAUDE.md files, skills, and MCP
-// configuration.
+// configuration. Env entries are appended on top of the inherited environment,
+// which lets a configuration point the CLI at any endpoint speaking the
+// Anthropic Messages protocol without disturbing the rest of the local setup.
 type Config struct {
 	Binary          string
 	Workdir         string
@@ -22,6 +24,7 @@ type Config struct {
 	Instructions    string
 	AllowedTools    []string
 	DisallowedTools []string
+	Env             map[string]string
 	Stderr          io.Writer
 }
 

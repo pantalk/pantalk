@@ -554,6 +554,148 @@ agents:
 	}
 }
 
+// env is an agent-level field, so every driver accepts it.
+func TestLoad_AgentEnvAcrossDrivers(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: claude-agent
+    driver: claude
+    env:
+      ANTHROPIC_BASE_URL: https://api.example.com/anthropic
+      ANTHROPIC_AUTH_TOKEN: $BACKEND_API_KEY
+  - name: codex-agent
+    driver: codex
+    env:
+      HTTPS_PROXY: http://proxy.example.com:8080
+  - name: acp-agent
+    driver: acp
+    command: kimi acp
+    env:
+      HTTPS_PROXY: http://proxy.example.com:8080
+  - name: command-agent
+    command: claude -p "check notifications"
+    env:
+      HTTPS_PROXY: http://proxy.example.com:8080
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Agents) != 4 {
+		t.Fatalf("expected 4 agents, got %d", len(cfg.Agents))
+	}
+
+	claudeAgent := cfg.Agents[0]
+	if claudeAgent.Env["ANTHROPIC_BASE_URL"] != "https://api.example.com/anthropic" ||
+		claudeAgent.Env["ANTHROPIC_AUTH_TOKEN"] != "$BACKEND_API_KEY" {
+		t.Fatalf("unexpected claude agent env: %+v", claudeAgent.Env)
+	}
+	for _, a := range cfg.Agents[1:] {
+		if a.Env["HTTPS_PROXY"] != "http://proxy.example.com:8080" {
+			t.Fatalf("agent %q did not accept env: %+v", a.Name, a.Env)
+		}
+	}
+}
+
+func TestLoad_AgentRejectsInvalidEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{"empty value", "        ANTHROPIC_BASE_URL: \"\"", "empty value"},
+		{"invalid name", "        \"BAD=NAME\": value", "invalid character"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfig(t, minimalBot+`
+agents:
+  - name: claude-engineering
+    driver: claude
+    env:
+`+tt.env+"\n")
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q error, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestLoad_ACPAgent(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: kimi-engineering
+    driver: acp
+    command: kimi acp
+    workdir: /tmp/project
+    timeout: 900
+    acp:
+      model: kimi-k3
+      approval: approve
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	a := cfg.Agents[0]
+	if a.Driver != "acp" {
+		t.Fatalf("unexpected acp config: %+v", a)
+	}
+	if len(a.Command) != 2 || a.Command[0] != "kimi" || a.Command[1] != "acp" {
+		t.Fatalf("unexpected acp command: %+v", a.Command)
+	}
+	if a.ACP.Model != "kimi-k3" || a.ACP.Approval != "approve" {
+		t.Fatalf("unexpected acp overrides: %+v", a.ACP)
+	}
+}
+
+func TestLoad_ACPAgentRequiresCommand(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: kimi-engineering
+    driver: acp
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "acp driver requires command") {
+		t.Fatalf("expected missing command error, got %v", err)
+	}
+}
+
+func TestLoad_ACPAgentEnforcesCommandAllowlist(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: rogue
+    driver: acp
+    command: /opt/rogue-agent acp
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "not in the allowed list") {
+		t.Fatalf("expected allowlist error, got %v", err)
+	}
+
+	if _, err := LoadWithOptions(path, true); err != nil {
+		t.Fatalf("unexpected error with --allow-exec: %v", err)
+	}
+}
+
+func TestLoad_ACPAgentRejectsUnsupportedApproval(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: kimi-engineering
+    driver: acp
+    command: kimi acp
+    acp:
+      approval: yolo
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "unsupported acp approval") {
+		t.Fatalf("expected approval error, got %v", err)
+	}
+}
+
 func TestLoad_BindingRejectsUnknownAgent(t *testing.T) {
 	path := writeConfig(t, `
 bots:

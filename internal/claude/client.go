@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/pantalk/pantalk/internal/procenv"
 )
 
 const (
@@ -85,6 +87,7 @@ func (c *Client) RunTurn(ctx context.Context, sessionID, prompt string) (TurnRes
 	if strings.TrimSpace(c.cfg.Workdir) != "" {
 		cmd.Dir = c.cfg.Workdir
 	}
+	procenv.Apply(cmd, c.cfg.Env)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()

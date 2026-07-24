@@ -4,6 +4,21 @@ All notable changes to Pantalk are documented here, following [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-07-24
+
+### Added
+
+- Add a native `acp` driver that runs any Agent Client Protocol server named
+  by `command` - for example Kimi Code via `command: kimi acp` - as one
+  persistent process with durable per-conversation sessions, optional model
+  selection, and a configurable tool-approval policy.
+- Add an agent-level `env` map, honored by every driver. Entries are appended
+  to the environment the agent process inherits from the daemon, and a `$NAME`
+  value is resolved from the daemon's environment at startup so a config can
+  name a secret without containing one. Among other things this points the
+  claude driver at any endpoint speaking the Anthropic Messages protocol.
+- Allow `kimi` as a command-driver binary without `--allow-exec`.
+
 ## [0.0.10] - 2026-07-24
 
 ### Added

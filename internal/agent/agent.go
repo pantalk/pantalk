@@ -17,6 +17,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
+	"github.com/pantalk/pantalk/internal/procenv"
 	"github.com/pantalk/pantalk/internal/protocol"
 )
 
@@ -29,17 +30,19 @@ var AllowedCommands = map[string]bool{
 	"goose":    true,
 	"opencode": true,
 	"gemini":   true,
+	"kimi":     true,
 }
 
 // Config describes a single agent definition from the YAML config.
 type Config struct {
-	Name     string  `yaml:"name"`
-	When     string  `yaml:"when"`     // expr expression evaluated against each event
-	Command  Command `yaml:"command"`  // argv - string or []string, exec'd directly
-	Workdir  string  `yaml:"workdir"`  // optional working directory
-	Buffer   int     `yaml:"buffer"`   // seconds to batch notifications (default 30)
-	Timeout  int     `yaml:"timeout"`  // max runtime in seconds (default 120)
-	Cooldown int     `yaml:"cooldown"` // min seconds between runs (default 60)
+	Name     string            `yaml:"name"`
+	When     string            `yaml:"when"`     // expr expression evaluated against each event
+	Command  Command           `yaml:"command"`  // argv - string or []string, exec'd directly
+	Workdir  string            `yaml:"workdir"`  // optional working directory
+	Env      map[string]string `yaml:"env"`      // appended to the inherited command environment
+	Buffer   int               `yaml:"buffer"`   // seconds to batch notifications (default 30)
+	Timeout  int               `yaml:"timeout"`  // max runtime in seconds (default 120)
+	Cooldown int               `yaml:"cooldown"` // min seconds between runs (default 60)
 }
 
 // exprEnv is the environment exposed to "when" expressions. Field names are
@@ -426,6 +429,7 @@ func (r *Runner) run(triggerCount int) {
 	if r.cfg.Workdir != "" {
 		cmd.Dir = r.cfg.Workdir
 	}
+	procenv.Apply(cmd, r.cfg.Env)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

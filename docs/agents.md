@@ -5,8 +5,9 @@ separation is the mechanism behind Pantalk's central claim: harnesses and
 platforms are declared in different blocks that never reference each other, so
 either can be replaced without touching the other.
 
-- Top-level `agents` describe how a harness starts - Codex, Claude Code, or any
-  other agent CLI through the `command` driver. Nothing here names a platform.
+- Top-level `agents` describe how a harness starts - Codex, Claude Code, any
+  Agent Client Protocol server through the `acp` driver, or any other agent
+  CLI through the `command` driver. Nothing here names a platform.
 - Each bot contains an ordered `agents` list describing when it uses those
   definitions. Nothing in a bot names a harness beyond the binding itself.
 - One agent runtime can serve multiple bots and conversations.
@@ -15,7 +16,8 @@ either can be replaced without touching the other.
 
 Changing which harness answers a conversation is a one-line edit followed by
 `pantalk reload`. [Pantalk Station](https://github.com/pantalk/station) ships
-Codex and Claude Code preinstalled so you can try that swap immediately.
+Codex, Claude Code, and Kimi Code preinstalled so you can try that swap
+immediately.
 
 ## Complete example
 
@@ -113,6 +115,43 @@ agents:
 Claude Code authentication and omitted settings come from the local CLI
 installation. Pantalk persists Claude session IDs for conversation continuity.
 
+### ACP
+
+The `acp` driver speaks the [Agent Client Protocol](https://agentclientprotocol.com)
+and works with any agent that can run as an ACP server over stdio. The agent
+is not baked into the driver: `command` names it, exactly like the `command`
+driver. Kimi Code (`kimi acp`) is the canonical example:
+
+```yaml
+agents:
+  - name: kimi-engineering
+    driver: acp
+    command: kimi acp             # any ACP-server command works here
+    workdir: /home/me/project
+    timeout: 900
+    instructions: |
+      You are the primary engineering assistant.
+    acp:
+      model: kimi-k3              # optional; otherwise the agent's local default
+      approval: reject            # reject (default), approve, or approve-for-session
+```
+
+Pantalk owns one ACP server process for this definition and creates or loads a
+durable ACP session for every Pantalk conversation. Sessions persist across
+daemon restarts when the agent supports session loading (Kimi Code does) and
+are typically looked up per working directory, so keep `workdir` stable.
+
+Authentication comes from the agent's local installation (for Kimi Code:
+`kimi login`). `approval` answers the agent's tool-permission requests:
+`reject` denies anything the agent cannot do on its own, `approve` allows each
+request once, and `approve-for-session` grants a standing approval per
+session. `model` selection uses ACP's model surface where the agent offers
+one. ACP has no dedicated instruction channel, so `instructions` are prepended
+to the first prompt of each new session.
+
+The same allowlist as the `command` driver applies: only known agent binaries
+may be named unless `pantalkd` starts with `--allow-exec`.
+
 ### Command
 
 ```yaml
@@ -131,6 +170,42 @@ directly without a shell. Only known agent binaries are allowed unless
 `pantalkd` starts with `--allow-exec`.
 
 An unbound agent definition is valid but its runtime is not started.
+
+### Environment
+
+Every driver runs its agent as a child process, and every driver accepts the
+same agent-level `env` map. Entries are appended to the environment the agent
+would otherwise inherit from the daemon, so existing CLI authentication,
+settings, and `PATH` continue to work, and an override wins over an inherited
+value of the same name.
+
+A value written as `$NAME` is resolved from the daemon's environment at
+startup, which lets a config name a secret without containing one. Startup
+fails with a clear error if the variable is unset, rather than launching an
+agent with an empty credential.
+
+```yaml
+agents:
+  - name: proxied
+    driver: codex          # or claude, acp, command
+    env:
+      HTTPS_PROXY: http://proxy.internal:8080
+```
+
+Because Claude Code selects its backend through the environment, this is also
+how the `claude` driver is pointed at any endpoint speaking the Anthropic
+Messages protocol:
+
+```yaml
+agents:
+  - name: reviewer
+    driver: claude
+    claude:
+      model: some-model
+    env:
+      ANTHROPIC_BASE_URL: https://api.example.com/anthropic
+      ANTHROPIC_AUTH_TOKEN: $API_KEY
+```
 
 ## Bot bindings
 

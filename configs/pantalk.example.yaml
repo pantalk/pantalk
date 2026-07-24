@@ -176,6 +176,29 @@ bots:
 #       # allowed_tools: [Read, Grep, Glob]
 #       # disallowed_tools: [Edit, Write]
 #
+#   - name: kimi-engineering             # any Agent Client Protocol server
+#     driver: acp
+#     command: kimi acp                  # the ACP agent to run, exec'd directly
+#     workdir: /home/user/project        # sessions are stored per workdir
+#     timeout: 900
+#     instructions: |
+#       You are the engineering assistant for this repository.
+#       Answer the user directly.
+#     acp:                               # every override is optional
+#       # model: kimi-k3                 # otherwise inherit the agent's config
+#       # approval: reject               # reject | approve | approve-for-session
+#
+# Every driver accepts an agent-level "env" map. Entries are appended to the
+# environment the agent process would otherwise inherit from the daemon, and a
+# $NAME value is resolved from the daemon's own environment at startup, so a
+# config can name a secret without containing one.
+#
+#   - name: proxied-agent
+#     driver: claude                     # works for codex, acp, and command too
+#     env:
+#       HTTPS_PROXY: http://proxy.internal:8080
+#       ANTHROPIC_AUTH_TOKEN: $API_KEY
+#
 # Command agents retain the original fire-and-forget CLI behavior. Only known
 # agent binaries (claude, codex, aider, goose, etc.) are permitted unless
 # pantalkd is started with --allow-exec. Bind command definitions from a bot's

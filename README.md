@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Any agent, any chat.</strong><br/>
-  A daemon that puts the coding agent you already run - Claude Code, Codex, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, SMS, Zulip, and iMessage. Nothing is welded together, so you pick both ends and can change either one later.
+  A daemon that puts the coding agent you already run - Claude Code, Codex, Kimi Code, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, SMS, Zulip, and iMessage. Nothing is welded together, so you pick both ends and can change either one later.
 </p>
 
 <p align="center">

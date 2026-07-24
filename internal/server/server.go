@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pantalk/pantalk/internal/acp"
 	"github.com/pantalk/pantalk/internal/agent"
 	"github.com/pantalk/pantalk/internal/claude"
 	"github.com/pantalk/pantalk/internal/codex"
@@ -63,6 +64,7 @@ type Server struct {
 
 	startCodexClient  func(context.Context, codex.Config) (agent.CodexClient, error)
 	startClaudeClient func(claude.Config) (agent.ClaudeClient, error)
+	startACPClient    func(context.Context, acp.Config) (agent.ACPClient, error)
 }
 
 type agentBinding struct {
@@ -96,6 +98,9 @@ func New(cfg config.Config, cfgPath string, socketOverride string, dbOverride st
 		},
 		startClaudeClient: func(cfg claude.Config) (agent.ClaudeClient, error) {
 			return claude.New(cfg)
+		},
+		startACPClient: func(ctx context.Context, cfg acp.Config) (agent.ACPClient, error) {
+			return acp.Start(ctx, cfg)
 		},
 	}
 }
@@ -578,6 +583,15 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			driver = "command"
 		}
 
+		// Environment overrides apply to every driver, so $ENV_VAR values are
+		// resolved once here rather than per driver.
+		env, err := resolveAgentEnv(acfg)
+		if err != nil {
+			stopRuntimes(runners)
+			runtimeCancel()
+			return err
+		}
+
 		var runtime agent.Runtime
 		switch driver {
 		case "command":
@@ -585,6 +599,7 @@ func (s *Server) startConnectors(cfg config.Config) error {
 				Name:     acfg.Name,
 				Command:  agent.Command(acfg.Command),
 				Workdir:  acfg.Workdir,
+				Env:      env,
 				Buffer:   acfg.Buffer,
 				Timeout:  acfg.Timeout,
 				Cooldown: acfg.Cooldown,
@@ -598,6 +613,7 @@ func (s *Server) startConnectors(cfg config.Config) error {
 		case "codex":
 			client, err := s.startCodexClient(runtimeCtx, codex.Config{
 				Binary: acfg.Codex.Binary,
+				Env:    env,
 			})
 			if err != nil {
 				stopRuntimes(runners)
@@ -632,7 +648,9 @@ func (s *Server) startConnectors(cfg config.Config) error {
 				Instructions:    acfg.Instructions,
 				AllowedTools:    acfg.Claude.AllowedTools,
 				DisallowedTools: acfg.Claude.DisallowedTools,
+				Env:             env,
 			})
+
 			if err != nil {
 				stopRuntimes(runners)
 				runtimeCancel()
@@ -648,6 +666,33 @@ func (s *Server) startConnectors(cfg config.Config) error {
 				stopRuntimes(runners)
 				runtimeCancel()
 				return fmt.Errorf("create claude agent %q: %w", acfg.Name, err)
+			}
+			runtime = r
+		case "acp":
+			client, err := s.startACPClient(runtimeCtx, acp.Config{
+				Binary:   acfg.Command[0],
+				Args:     acfg.Command[1:],
+				Model:    acfg.ACP.Model,
+				Approval: acfg.ACP.Approval,
+				Env:      env,
+			})
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("start acp agent %q: %w", acfg.Name, err)
+			}
+
+			r, err := agent.NewACPRuntime(runtimeCtx, agent.ACPRuntimeConfig{
+				Name:         acfg.Name,
+				Workdir:      acfg.Workdir,
+				Instructions: acfg.Instructions,
+				Timeout:      time.Duration(acfg.Timeout) * time.Second,
+			}, client, s.notifications, s.deliverAgentReply)
+			if err != nil {
+				_ = client.Close()
+				stopRuntimes(runners)
+				runtimeCancel()
+				return fmt.Errorf("create acp agent %q: %w", acfg.Name, err)
 			}
 			runtime = r
 		default:
@@ -757,6 +802,26 @@ func (s *Server) startConnectors(cfg config.Config) error {
 	}
 
 	return nil
+}
+
+// resolveAgentEnv resolves an agent's environment overrides, expanding
+// $ENV_VAR references so a config can name a secret without containing it.
+// Nil is returned when nothing is configured, leaving plain inheritance of the
+// daemon's environment in place.
+func resolveAgentEnv(acfg config.AgentConfig) (map[string]string, error) {
+	if len(acfg.Env) == 0 {
+		return nil, nil
+	}
+
+	env := make(map[string]string, len(acfg.Env))
+	for key, value := range acfg.Env {
+		resolved, err := config.ResolveCredential(value)
+		if err != nil {
+			return nil, fmt.Errorf("resolve agent %q env %s: %w", acfg.Name, key, err)
+		}
+		env[key] = resolved
+	}
+	return env, nil
 }
 
 func stopRuntimes(runtimes []agent.Runtime) {
