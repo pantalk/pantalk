@@ -26,6 +26,10 @@ const (
 
 	defaultClientName    = "pantalk"
 	defaultClientVersion = "dev"
+
+	// processExitGrace bounds how long a failed write waits for the process
+	// exit to be recorded. It is only ever paid on an error path.
+	processExitGrace = time.Second
 )
 
 type commandFactory func(context.Context, Config) (*exec.Cmd, error)
@@ -457,7 +461,7 @@ func (c *Client) call(ctx context.Context, method string, params, target any) er
 
 	if err := c.write(requestMessage{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
 		c.removePending(key)
-		return err
+		return c.writeFailure(ctx, err)
 	}
 
 	select {
@@ -486,6 +490,32 @@ func (c *Client) call(ctx context.Context, method string, params, target any) er
 
 func (c *Client) notify(method string, params any) error {
 	return c.write(notificationMessage{JSONRPC: "2.0", Method: method, Params: params})
+}
+
+// writeFailure upgrades a transport error into the terminal process error once
+// the agent has exited. A write that races the exit fails with EPIPE, which
+// says nothing about why the agent died, while the process error carries its
+// exit status and captured stderr. The wait is bounded because a live agent
+// can also refuse a write.
+func (c *Client) writeFailure(ctx context.Context, err error) error {
+	if errors.Is(err, ErrClosed) {
+		return err
+	}
+
+	timer := time.NewTimer(processExitGrace)
+	defer timer.Stop()
+
+	select {
+	case <-c.done:
+		// fail runs before done is closed, so a fatal error is already
+		// recorded here. Close leaves it nil, which keeps the write error.
+		if fatal := c.Err(); fatal != nil {
+			return fatal
+		}
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return err
 }
 
 func (c *Client) write(message any) error {
