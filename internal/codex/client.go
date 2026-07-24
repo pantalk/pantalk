@@ -22,6 +22,10 @@ const (
 	maxMessageBytes = 8 << 20
 	stderrTailBytes = 16 << 10
 	eventBufferSize = 64
+
+	// processExitGrace bounds how long a failed write waits for the process
+	// exit to be recorded. It is only ever paid on an error path.
+	processExitGrace = time.Second
 )
 
 type commandFactory func(context.Context, Config) (*exec.Cmd, error)
@@ -255,6 +259,7 @@ func start(ctx context.Context, cfg Config, factory commandFactory) (*Client, er
 		return nil, fmt.Errorf("initialize codex app-server: %w", err)
 	}
 	if err := c.notify("initialized", map[string]any{}); err != nil {
+		err = c.writeFailure(ctx, err)
 		c.closeAfterStartFailure()
 		return nil, fmt.Errorf("acknowledge codex app-server initialization: %w", err)
 	}
@@ -529,7 +534,7 @@ func (c *Client) callWithResultHook(
 
 	if err := c.write(requestMessage{ID: id, Method: method, Params: params}); err != nil {
 		c.removePending(key)
-		return err
+		return c.writeFailure(ctx, err)
 	}
 
 	select {
@@ -558,6 +563,32 @@ func (c *Client) callWithResultHook(
 
 func (c *Client) notify(method string, params any) error {
 	return c.write(notificationMessage{Method: method, Params: params})
+}
+
+// writeFailure upgrades a transport error into the terminal process error once
+// the app-server has exited. A write that races the exit fails with EPIPE,
+// which says nothing about why the process died, while the process error
+// carries its exit status and captured stderr. The wait is bounded because a
+// live process can also refuse a write.
+func (c *Client) writeFailure(ctx context.Context, err error) error {
+	if errors.Is(err, ErrClosed) {
+		return err
+	}
+
+	timer := time.NewTimer(processExitGrace)
+	defer timer.Stop()
+
+	select {
+	case <-c.done:
+		// fail runs before done is closed, so a fatal error is already
+		// recorded here. Close leaves it nil, which keeps the write error.
+		if fatal := c.Err(); fatal != nil {
+			return fatal
+		}
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return err
 }
 
 func (c *Client) write(message any) error {
