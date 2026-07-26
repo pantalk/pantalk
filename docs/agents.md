@@ -15,7 +15,7 @@ either can be replaced without touching the other.
   thread.
 
 Changing which harness answers a conversation is a one-line edit followed by
-`pantalk reload`. [Pantalk Station](https://github.com/pantalk/station) ships
+`pantalk reload`. [Pantalk Ghost](https://github.com/pantalk/ghost) ships
 Codex, Claude Code, and Kimi Code preinstalled so you can try that swap
 immediately.
 
@@ -138,11 +138,33 @@ agents:
 
 Pantalk owns one ACP server process for this definition and creates or loads a
 durable ACP session for every Pantalk conversation. Sessions persist across
-daemon restarts when the agent supports session loading (Kimi Code does) and
-are typically looked up per working directory, so keep `workdir` stable.
+daemon restarts when the agent supports session loading (Kimi Code and Goose
+both do) and are typically looked up per working directory, so keep `workdir`
+stable.
+
+Other agents work the same way. [Goose](https://github.com/aaif-goose/goose)
+serves ACP natively, so it needs no adapter:
+
+```yaml
+agents:
+  - name: goose-engineering
+    driver: acp
+    command: goose acp
+    workdir: /home/me/project
+```
+
+[zot](https://github.com/chatbotkit/zot) does too, via `command: zot acp`.
+Codex and Claude Code are the exception: they reach ACP through the separate
+`codex-acp` and `claude-agent-acp` adapters, so the native `codex` and `claude`
+drivers are usually the better choice for them.
 
 Authentication comes from the agent's local installation (for Kimi Code:
-`kimi login`). `approval` answers the agent's tool-permission requests:
+`kimi login`; for Goose: `goose configure`). An agent may advertise ACP
+`authMethods` during initialization — Goose offers one — but Pantalk does not
+implement the protocol's `authenticate` call, so an unconfigured agent fails
+when its first session starts rather than reporting that it needs credentials.
+
+`approval` answers the agent's tool-permission requests:
 `reject` denies anything the agent cannot do on its own, `approve` allows each
 request once, and `approve-for-session` grants a standing approval per
 session. `model` selection uses ACP's model surface where the agent offers
@@ -151,6 +173,60 @@ to the first prompt of each new session.
 
 The same allowlist as the `command` driver applies: only known agent binaries
 may be named unless `pantalkd` starts with `--allow-exec`.
+
+## Isolation
+
+An agent can run its harness in a container instead of alongside the daemon:
+
+```yaml
+agents:
+  - name: reviewer
+    driver: acp
+    command: zot acp
+    isolation: container
+```
+
+The shorthand expands to a block when something needs overriding:
+
+```yaml
+    isolation:
+      mode: container            # container | none (default)
+      image: ghcr.io/acme/zot:v3 # required unless the harness has a known image
+      workspace: /workspace      # in-container working directory
+      runtime: docker            # docker | podman
+```
+
+Pantalk compiles the container invocation itself. The agent keeps naming its
+harness, so the allowlist still checks `zot` rather than the container runtime
+and `--allow-exec` is not needed. Each isolated agent gets its own workspace
+volume, `pantalk-<agent>-workspace`, which is what keeps one agent's work out
+of reach of the others.
+
+Two consequences worth knowing:
+
+- `command` and `binary` become paths **inside the image**, not on this host. A
+  `claude.binary: /opt/homebrew/bin/claude` that works uncontained will not
+  resolve in a container.
+- The Codex driver's own sandbox is disabled (`danger-full-access`) for
+  isolated agents, because the container is already the boundary and Codex's
+  bubblewrap needs user namespaces an unprivileged container usually denies. An
+  explicit `codex.sandbox` always wins.
+
+## Overriding the harness binary
+
+Every driver accepts `command`, which replaces the binary it would otherwise
+run while the driver still appends its own protocol arguments:
+
+```yaml
+agents:
+  - name: pinned
+    driver: claude
+    command: /opt/claude-2.1/bin/claude
+```
+
+Use it for wrappers, pinned versions, or a path that only exists inside an
+image. It cannot be combined with `codex.binary` or `claude.binary`, and an
+overriding command faces the same allowlist as the `command` driver.
 
 ### Command
 
@@ -174,15 +250,41 @@ An unbound agent definition is valid but its runtime is not started.
 ### Environment
 
 Every driver runs its agent as a child process, and every driver accepts the
-same agent-level `env` map. Entries are appended to the environment the agent
-would otherwise inherit from the daemon, so existing CLI authentication,
-settings, and `PATH` continue to work, and an override wins over an inherited
-value of the same name.
+same agent-level `env` map and `env_inherit` list. **An agent process inherits
+nothing from the daemon.** Its environment is exactly what its own definition
+names - nothing else, including `PATH` and `HOME`.
+
+This is deliberate. The daemon's environment holds every bot credential a
+config resolved through `$NAME`, so an inheriting child would hand a single
+agent the tokens for every service Pantalk serves. Since agents answer messages
+from people who are not you, one prompt injection would be enough. Default-deny
+also makes per-agent secrets real: naming `$API_KEY` in one definition no
+longer exposes it to the others.
 
 A value written as `$NAME` is resolved from the daemon's environment at
 startup, which lets a config name a secret without containing one. Startup
 fails with a clear error if the variable is unset, rather than launching an
 agent with an empty credential.
+
+`env_inherit` copies variables through by name, for the process settings an
+agent needs but that are not worth writing into a config. A name ending in `*`
+copies every variable with that prefix, and an unset name is skipped rather
+than being an error. An explicit `env` entry wins over an inherited one.
+
+```yaml
+agents:
+  - name: engineering
+    driver: claude
+    env_inherit: [PATH, HOME, USER, SHELL, TMPDIR, TZ, LANG, 'LC_*']
+```
+
+Most definitions want something close to that list. `HOME` matters most: local
+CLI authentication, settings, `CLAUDE.md`/`AGENTS.md` files, skills, and MCP
+configuration are all found through it, so a driver that should inherit your
+local login must inherit `HOME`. Command agents that call the `pantalk` CLI
+also need `XDG_RUNTIME_DIR` when the daemon uses a non-default socket path.
+
+Everything else stays opt-in:
 
 ```yaml
 agents:

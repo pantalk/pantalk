@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +32,19 @@ var AllowedCommands = map[string]bool{
 	"opencode": true,
 	"gemini":   true,
 	"kimi":     true,
+	"zot":      true,
+}
+
+// AllowedCommandNames lists AllowedCommands in a stable order, for error
+// messages that tell the operator what they can run. Deriving the list keeps it
+// from drifting away from the map it describes.
+func AllowedCommandNames() []string {
+	names := make([]string, 0, len(AllowedCommands))
+	for name := range AllowedCommands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Config describes a single agent definition from the YAML config.
@@ -39,7 +53,7 @@ type Config struct {
 	When     string            `yaml:"when"`     // expr expression evaluated against each event
 	Command  Command           `yaml:"command"`  // argv - string or []string, exec'd directly
 	Workdir  string            `yaml:"workdir"`  // optional working directory
-	Env      map[string]string `yaml:"env"`      // appended to the inherited command environment
+	Env      map[string]string `yaml:"env"`      // the complete command environment; nothing is inherited
 	Buffer   int               `yaml:"buffer"`   // seconds to batch notifications (default 30)
 	Timeout  int               `yaml:"timeout"`  // max runtime in seconds (default 120)
 	Cooldown int               `yaml:"cooldown"` // min seconds between runs (default 60)

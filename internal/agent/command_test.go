@@ -2,6 +2,7 @@ package agent
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -87,7 +88,7 @@ func TestCommand_Tokenize_EmptyString(t *testing.T) {
 }
 
 func TestAllowedCommands(t *testing.T) {
-	allowed := []string{"claude", "codex", "copilot", "aider", "goose", "opencode", "gemini"}
+	allowed := []string{"claude", "codex", "copilot", "aider", "goose", "opencode", "gemini", "kimi", "zot"}
 	for _, name := range allowed {
 		if !AllowedCommands[name] {
 			t.Errorf("expected %q to be in AllowedCommands", name)
@@ -98,6 +99,22 @@ func TestAllowedCommands(t *testing.T) {
 	for _, name := range notAllowed {
 		if AllowedCommands[name] {
 			t.Errorf("expected %q to not be in AllowedCommands", name)
+		}
+	}
+}
+
+func TestAllowedCommandNames(t *testing.T) {
+	names := AllowedCommandNames()
+	if len(names) != len(AllowedCommands) {
+		t.Fatalf("got %d names for %d allowed commands: %v", len(names), len(AllowedCommands), names)
+	}
+	// Error messages quote this list, so the order has to be stable.
+	if !sort.StringsAreSorted(names) {
+		t.Errorf("names are not sorted: %v", names)
+	}
+	for _, name := range names {
+		if !AllowedCommands[name] {
+			t.Errorf("%q is listed but not allowed", name)
 		}
 	}
 }

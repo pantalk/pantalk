@@ -1299,6 +1299,42 @@ func TestZulipResolveChannelNames(t *testing.T) {
 
 // --- iMessage tests ---
 
+func TestEscapeAppleScriptString(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"plain", "hello there", "hello there"},
+		{"quote", `say "hi"`, `say \"hi\"`},
+		// The backslash must be escaped before the escapes added after it,
+		// otherwise the second pass escapes its own output.
+		{"backslash before quote", `a\"b`, `a\\\"b`},
+		{"newline", "line one\nline two", `line one\nline two`},
+		{"carriage return", "one\rtwo", `one\rtwo`},
+		{"tab", "one\ttwo", `one\ttwo`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := escapeAppleScriptString(tt.value); got != tt.want {
+				t.Errorf("escapeAppleScriptString(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+// A recipient reaches the same string literal as the message body, so it needs
+// the same escaping. It previously escaped only backslashes and quotes, and a
+// recipient containing a newline made osascript fail to compile the script.
+func TestEscapeAppleScriptStringKeepsValuesOnOneLine(t *testing.T) {
+	for _, value := range []string{"+1555\n0100", "friend\rname", "a\tb"} {
+		if got := escapeAppleScriptString(value); strings.ContainsAny(got, "\n\r\t") {
+			t.Errorf("escapeAppleScriptString(%q) = %q, want no raw control characters", value, got)
+		}
+	}
+}
+
 func TestResolveIMessageChannel(t *testing.T) {
 	tests := []struct {
 		name    string

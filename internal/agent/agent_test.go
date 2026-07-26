@@ -1452,7 +1452,7 @@ func TestEveryFunc_Direct(t *testing.T) {
 // The command driver runs its agent as a child process, so configured
 // environment overrides must reach that process alongside the inherited
 // daemon environment.
-func TestRunnerPassesEnvToCommandProcess(t *testing.T) {
+func TestRunnerGivesCommandOnlyItsConfiguredEnv(t *testing.T) {
 	t.Setenv("PANTALK_INHERITED_VAR", "inherited")
 
 	outputPath := filepath.Join(t.TempDir(), "env.txt")
@@ -1476,7 +1476,9 @@ func TestRunnerPassesEnvToCommandProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read command output: %v", err)
 	}
-	if got := string(written); got != "override,inherited" {
-		t.Fatalf("child environment = %q, want \"override,inherited\"", got)
+	// The daemon's environment holds every credential a config resolved
+	// through $NAME, so an unnamed variable must not reach the child.
+	if got := string(written); got != "override," {
+		t.Fatalf("child environment = %q, want \"override,\" with nothing inherited", got)
 	}
 }

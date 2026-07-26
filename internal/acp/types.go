@@ -29,7 +29,7 @@ type Config struct {
 	Args     []string          // argv after the binary, e.g. ["acp"]
 	Model    string            // optional model applied to each new session
 	Approval string            // permission responses: reject (default), approve, or approve-for-session
-	Env      map[string]string // appended to the inherited agent process environment
+	Env      map[string]string // the complete agent process environment; nothing is inherited
 
 	ClientName    string
 	ClientVersion string
@@ -105,4 +105,16 @@ var (
 	// AuthRequiredCode is the ACP error code agents return when the operator
 	// must authenticate outside the protocol (for Kimi: `kimi login`).
 	AuthRequiredCode int64 = -32000
+
+	// MethodNotFoundCode is the JSON-RPC code for a method the agent does not
+	// implement. Optional and unstable ACP methods are answered with it, so the
+	// client can tell "unsupported" apart from "failed".
+	MethodNotFoundCode int64 = -32601
 )
+
+// isMethodNotFound reports whether err is the agent declining a method it does
+// not implement.
+func isMethodNotFound(err error) bool {
+	var rpcErr *RPCError
+	return errors.As(err, &rpcErr) && rpcErr.Code == MethodNotFoundCode
+}

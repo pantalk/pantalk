@@ -47,6 +47,9 @@ func New(cfg Config) (*Client, error) {
 	if binary == "" {
 		binary = "claude"
 	}
+	// Binary is whatever is executed on this host. Under isolation that is the
+	// container runtime, and the harness itself lives in the image — so this
+	// must never be resolved against the host PATH.
 	resolved, err := exec.LookPath(binary)
 	if err != nil {
 		return nil, fmt.Errorf("find claude executable %q: %w", binary, err)
@@ -79,7 +82,7 @@ func (c *Client) RunTurn(ctx context.Context, sessionID, prompt string) (TurnRes
 		return TurnResult{}, errors.New("claude prompt is required")
 	}
 
-	args := c.commandArgs(strings.TrimSpace(sessionID))
+	args := append(append([]string{}, c.cfg.Args...), c.commandArgs(strings.TrimSpace(sessionID))...)
 	cmd, err := c.factory(ctx, c.cfg.Binary, args)
 	if err != nil {
 		return TurnResult{}, fmt.Errorf("create claude command: %w", err)

@@ -24,7 +24,13 @@ type Config struct {
 	// Binary is the path or name of the Codex executable. It defaults to codex.
 	Binary string
 
-	// Env is appended to the inherited environment of the app-server process.
+	// Args are prefix arguments placed before "app-server --stdio". They carry
+	// the container invocation when the agent is isolated, so Binary is the
+	// container runtime and the harness lives in the image.
+	Args []string
+
+	// Env is the complete environment of the app-server process; nothing is
+	// inherited from the daemon.
 	Env map[string]string
 
 	ClientName    string

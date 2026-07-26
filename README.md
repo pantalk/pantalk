@@ -6,11 +6,11 @@
 
 <p align="center">
   <strong>Any agent, any chat.</strong><br/>
-  A daemon that puts the coding agent you already run - Claude Code, Codex, Kimi Code, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, SMS, Zulip, and iMessage. Nothing is welded together, so you pick both ends and can change either one later.
+  A daemon that puts the coding agent you already run - Claude Code, Codex, Kimi Code, Zot, Copilot, Gemini CLI, Goose, OpenCode, Aider - into the chat apps your team already uses: Slack, Discord, Mattermost, Telegram, WhatsApp, IRC, XMPP/Jabber, Twitch, Nostr, Matrix, SMS, Zulip, and iMessage. Nothing is welded together, so you pick both ends and can change either one later.
 </p>
 
 <p align="center">
-  <a href="https://pantalk.dev">Website</a> · <a href="#what-you-get-out-of-it">Use Cases</a> · <a href="#quick-start">Quick Start</a> · <a href="#pantalk-station">Station</a> · <a href="#docker">Docker</a> · <a href="#platform-setup">Platform Setup</a>
+  <a href="https://pantalk.dev">Website</a> · <a href="#what-you-get-out-of-it">Use Cases</a> · <a href="#quick-start">Quick Start</a> · <a href="#pantalk-ghost">Ghost</a> · <a href="#docker">Docker</a> · <a href="#platform-setup">Platform Setup</a>
 </p>
 
 ---
@@ -84,12 +84,12 @@ agents:
   - name: engineering
     driver: claude
     workdir: /workspace/project
-    claude:
-      permission_mode: acceptEdits
 
 bots:
   - name: company-slack
     type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
     agents:
       - agent: engineering
         when: true
@@ -105,15 +105,25 @@ the runbook, and reports back - and because Twilio and WhatsApp are just other
 connectors, it can reach a phone that has nothing installed on it.
 
 ```yaml
+agents:
+  - name: engineering
+    driver: claude
+    workdir: /workspace/project
+
 bots:
   - name: ops-slack
     type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
     agents:
       - agent: engineering
         when: 'channel == "#incidents"'
 
   - name: oncall-sms
     type: twilio
+    account_sid: $TWILIO_ACCOUNT_SID
+    auth_token: $TWILIO_AUTH_TOKEN
+    phone_number: $TWILIO_PHONE_NUMBER
     agents:
       - agent: engineering
         when: direct
@@ -122,6 +132,7 @@ bots:
         agent: engineering
         when: 'at("08:00") && weekday in ["mon","tue","wed","thu","fri"]'
         timezone: Europe/London
+        target: $ONCALL_PHONE_NUMBER # SMS has no channel; a schedule needs a destination
         prompt: |
           Summarize overnight alerts and open incidents.
 ```
@@ -139,9 +150,16 @@ reaches it by DM or mention from the chat client they already have open. No
 per-person license, no local install, no terminal.
 
 ```yaml
+agents:
+  - name: engineering
+    driver: claude
+    workdir: /workspace/project
+
 bots:
   - name: team-assistant
     type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
     agents:
       - agent: engineering
         when: direct # every teammate's DM, one shared harness
@@ -156,13 +174,13 @@ ever touching a CLI.
 
 ## Complete Pluggability
 
-|                   | Harness-specific product       | Pantalk                                            |
-| ----------------- | ------------------------------ | -------------------------------------------------- |
-| **The pair**      | Chosen for you                 | You choose both ends, independently                |
-| **Swap harness**  | Migrate to another product     | Change `driver:` in YAML                           |
-| **Swap platform** | Wait for the vendor to ship it | Change `type:` in YAML                             |
-| **Many at once**  | One agent, one platform        | N harnesses × M platforms, one daemon              |
-| **Adoption cost** | Your team moves or installs    | Nothing changes for anyone                         |
+|                   | Harness-specific product       | Pantalk                                                 |
+| ----------------- | ------------------------------ | ------------------------------------------------------- |
+| **The pair**      | Chosen for you                 | You choose both ends, independently                     |
+| **Swap harness**  | Migrate to another product     | Change `driver:` in YAML                                |
+| **Swap platform** | Wait for the vendor to ship it | Change `type:` in YAML                                  |
+| **Many at once**  | One agent, one platform        | N harnesses × M platforms, one daemon                   |
+| **Adoption cost** | Your team moves or installs    | Nothing changes for anyone                              |
 | **Reach**         | The supported platform         | Thirteen platforms, including phone numbers with no app |
 
 And beneath that, the plumbing every one of those pairings would otherwise make
@@ -179,43 +197,45 @@ you rebuild:
 
 ## Supported Harnesses
 
-Native drivers own a persistent session and derive a durable thread per
-conversation. The `command` driver runs any other harness fire-and-forget.
+Native and ACP drivers own a persistent session and derive a durable thread per
+conversation. The `command` driver runs other harnesses fire-and-forget.
 
-| Harness           | Driver                     | Notes                                          |
-| ----------------- | -------------------------- | ---------------------------------------------- |
-| **Claude Code**   | `claude` native            | Reuses local auth/config, resumes sessions     |
-| **Codex**         | `codex` native             | Persistent `app-server`, durable Codex threads |
-| **Copilot**       | `command`                  | Allowlisted by default                         |
-| **Gemini CLI**    | `command`                  | Allowlisted by default                         |
-| **Goose**         | `command`                  | Allowlisted by default                         |
-| **OpenCode**      | `command`                  | Allowlisted by default                         |
-| **Aider**         | `command`                  | Allowlisted by default                         |
-| **Anything else** | `command` + `--allow-exec` | Or drive the socket directly from any language |
+| Harness           | Driver                              | Notes                                          |
+| ----------------- | ----------------------------------- | ---------------------------------------------- |
+| **Claude Code**   | `claude` native                     | Reuses local auth/config, resumes sessions     |
+| **Codex**         | `codex` native                      | Persistent `app-server`, durable Codex threads |
+| **Kimi Code**     | `acp`, command `kimi acp`           | Persistent ACP sessions and model selection    |
+| **zot**           | `acp`, command `zot acp`            | Autonomous coding agent over ACP               |
+| **Copilot**       | `command`                           | Allowlisted by default                         |
+| **Gemini CLI**    | `command`                           | Allowlisted by default                         |
+| **Goose**         | `command`                           | Allowlisted by default                         |
+| **OpenCode**      | `command`                           | Allowlisted by default                         |
+| **Aider**         | `command`                           | Allowlisted by default                         |
+| **Anything else** | `acp` or `command` + `--allow-exec` | Or drive the socket directly from any language |
 
 Every harness in that table reaches every platform in the next one. See
 [`docs/agents.md`](docs/agents.md) for the full driver reference, and
-[Pantalk Station](#pantalk-station) for a working example you can boot in one
+[Pantalk Ghost](#pantalk-ghost) for a working example you can boot in one
 command.
 
 ## Supported Platforms
 
-| Platform       | Transport                       | Status          |
-| -------------- | ------------------------------- | --------------- |
-| **Local**      | Unix socket                     | ✅ Dev/test     |
-| **Slack**      | Socket Mode + Web API           | ✅ Full support |
-| **Discord**    | Gateway + REST API              | ✅ Full support |
-| **Mattermost** | WebSocket + REST API            | ✅ Full support |
-| **Telegram**   | Bot API long-poll + sendMessage | ✅ Full support |
-| **WhatsApp**   | Web multi-device (whatsmeow)    | ✅ Full support |
-| **IRC**        | TCP/TLS + IRC protocol          | ✅ Full support |
-| **XMPP/Jabber** | Client-to-server + MUC          | ✅ DM/MUC + typing |
-| **Twitch**      | IRC over TLS + IRCv3            | ✅ Chat support |
+| Platform        | Transport                       | Status                |
+| --------------- | ------------------------------- | --------------------- |
+| **Local**       | Unix socket                     | ✅ Dev/test           |
+| **Slack**       | Socket Mode + Web API           | ✅ Full support       |
+| **Discord**     | Gateway + REST API              | ✅ Full support       |
+| **Mattermost**  | WebSocket + REST API            | ✅ Full support       |
+| **Telegram**    | Bot API long-poll + sendMessage | ✅ Full support       |
+| **WhatsApp**    | Web multi-device (whatsmeow)    | ✅ Full support       |
+| **IRC**         | TCP/TLS + IRC protocol          | ✅ Full support       |
+| **XMPP/Jabber** | Client-to-server + MUC          | ✅ DM/MUC + typing    |
+| **Twitch**      | IRC over TLS + IRCv3            | ✅ Chat support       |
 | **Nostr**       | Relay WebSocket (NIP-17/28/29)  | ✅ DM/channel support |
-| **Matrix**     | Client-Server API (mautrix-go)  | ✅ Full support |
-| **Twilio**     | REST API (polling + send)       | ✅ Full support |
-| **Zulip**      | REST API + Event Queue          | ✅ Full support |
-| **iMessage**   | Messages database + AppleScript | ✅ macOS support |
+| **Matrix**      | Client-Server API (mautrix-go)  | ✅ Full support       |
+| **Twilio**      | REST API (polling + send)       | ✅ Full support       |
+| **Zulip**       | REST API + Event Queue          | ✅ Full support       |
+| **iMessage**    | Messages database + AppleScript | ✅ macOS support      |
 
 ---
 
@@ -241,23 +261,24 @@ knowing which harness is on the other end.
 - **Multi-bot** - define multiple bots per service via config
 - **Local-first** - SQLite persistence, no external dependencies
 
-## Pantalk Station
+## Pantalk Ghost
 
-[Pantalk Station](https://github.com/pantalk/station) is the reference showcase:
-a browser-accessible Linux desktop with Pantalk, Codex, and Claude Code already
-installed and registered as agents. It exists to make the pluggability concrete -
-boot it, log into a harness, pick a deployment, and an agent is live in a real
-chat server minutes later.
+[Pantalk Ghost](https://github.com/pantalk/ghost) is the reference showcase:
+a browser-accessible Linux desktop with Pantalk, Codex, Claude Code, and Kimi
+Code installed. Codex and Claude Code are registered in the starter config;
+Kimi Code is ready to add through the ACP driver. It exists to make the
+pluggability concrete - boot it, log into a harness, pick a deployment, and an
+agent is live in a real chat server minutes later.
 
 ```bash
 docker run --detach \
-  --name pantalk-station \
+  --name pantalk-ghost \
   --shm-size 1g \
   --publish 127.0.0.1:6902:6901 \
-  ghcr.io/pantalk/station:latest
+  ghcr.io/pantalk/ghost:latest
 ```
 
-Open <http://127.0.0.1:6902>. Station ships transport-neutral on purpose: the
+Open <http://127.0.0.1:6902>. Ghost ships transport-neutral on purpose: the
 messaging system is a deployment recipe, not part of the image. Bring up
 Mattermost or an Ergo IRC server alongside it with one command, and swap which
 harness answers by editing one line of Pantalk config.
@@ -300,7 +321,7 @@ docker run --detach \
 The image runs `pantalkd` as an unprivileged user and includes both `pantalk`
 and `pantalkd`. Harnesses still require their own runtimes and authentication.
 Extend the image with the harness you want, or use
-[Pantalk Station](#pantalk-station), which ships Codex and Claude Code already
+[Pantalk Ghost](#pantalk-ghost), which ships Codex and Claude Code already
 installed and registered.
 
 For the topologies beyond a single container - exporting the daemon socket to
@@ -311,13 +332,19 @@ does to the trust boundary - see [`docs/deployment.md`](docs/deployment.md).
 
 ### 1. Configure
 
-Create a config file with your bot credentials:
+Create a config file with one harness, one platform, and the binding between
+them:
 
 ```bash
 mkdir -p ~/.config/pantalk
 cat > ~/.config/pantalk/config.yaml << 'EOF'
 server:
   notification_history_size: 1000
+
+agents:
+  - name: engineering
+    driver: codex # or claude, or any ACP server via `driver: acp`
+    workdir: /home/me/project
 
 bots:
   - name: my-bot
@@ -326,8 +353,18 @@ bots:
     app_level_token: $SLACK_APP_LEVEL_TOKEN
     channels:
       - C0123456789
+    agents:
+      - agent: engineering
+        when: true
 EOF
 ```
+
+That is the whole product in one file: the harness is declared on one side, the
+platform on the other, and the `when:` binding is the only thing joining them.
+Mention the bot in that channel and Codex answers there.
+
+A bot with no `agents:` block is still valid - it connects, and the CLI below
+can send and read messages through it - but nothing answers on its own.
 
 See `configs/pantalk.example.yaml` for a full example with all platforms.
 
@@ -395,6 +432,8 @@ agents:
 bots:
   - name: company-slack # same two harnesses...
     type: slack
+    bot_token: $SLACK_BOT_TOKEN
+    app_level_token: $SLACK_APP_LEVEL_TOKEN
     agents:
       - agent: reviewer
         when: 'channel == "#code-review"'
@@ -403,6 +442,9 @@ bots:
 
   - name: oncall-sms # ...reachable from a phone, unchanged
     type: twilio
+    account_sid: $TWILIO_ACCOUNT_SID
+    auth_token: $TWILIO_AUTH_TOKEN
+    phone_number: $TWILIO_PHONE_NUMBER
     agents:
       - agent: engineering
         when: true
@@ -524,8 +566,12 @@ pantalk reload
 bots:
   - name: ops-bot # --bot ops-bot
     type: slack
+    bot_token: $SLACK_BOT_TOKEN_OPS
+    app_level_token: $SLACK_APP_LEVEL_TOKEN_OPS
   - name: eng-bot # --bot eng-bot
     type: slack
+    bot_token: $SLACK_BOT_TOKEN_ENG
+    app_level_token: $SLACK_APP_LEVEL_TOKEN_ENG
 ```
 
 ### Daemon flags
@@ -571,20 +617,21 @@ JSON over Unix domain socket. Every request is a single JSON object with an `act
 
 ### Platform Connectors
 
-| Platform   | Event Streaming   | Message Send  |
-| ---------- | ----------------- | ------------- |
-| Slack      | Socket Mode       | Web API       |
-| Discord    | Gateway           | REST API      |
-| Mattermost | WebSocket         | REST API      |
-| Telegram   | Bot API long-poll | `sendMessage` |
-| WhatsApp   | Web multi-device  | `SendMessage` |
-| IRC        | TCP/TLS           | `PRIVMSG`     |
+| Platform    | Event Streaming   | Message Send   |
+| ----------- | ----------------- | -------------- |
+| Slack       | Socket Mode       | Web API        |
+| Discord     | Gateway           | REST API       |
+| Mattermost  | WebSocket         | REST API       |
+| Telegram    | Bot API long-poll | `sendMessage`  |
+| WhatsApp    | Web multi-device  | `SendMessage`  |
+| IRC         | TCP/TLS           | `PRIVMSG`      |
 | XMPP/Jabber | Client-to-server  | Message stanza |
 | Twitch      | IRC over TLS      | `PRIVMSG`      |
 | Nostr       | Relay WebSocket   | Signed event   |
-| Matrix     | Client-Server API | REST API      |
-| Twilio     | REST API poll     | REST API      |
-| Zulip      | Event Queue       | REST API      |
+| Matrix      | Client-Server API | REST API       |
+| Twilio      | REST API poll     | REST API       |
+| Zulip       | Event Queue       | REST API       |
+| iMessage    | Messages database | AppleScript    |
 
 ### Persistence
 
@@ -648,20 +695,21 @@ An inbound event becomes a notification when any of these are true:
 
 Each platform requires its own app/bot setup before Pantalk can connect. See the detailed guides:
 
-| Platform   | Guide                                        | Connection Method       |
-| ---------- | -------------------------------------------- | ----------------------- |
-| Slack      | [Slack Setup](docs/slack-setup.md)           | Socket Mode (WebSocket) |
-| Discord    | [Discord Setup](docs/discord-setup.md)       | Gateway (WebSocket)     |
-| Mattermost | [Mattermost Setup](docs/mattermost-setup.md) | WebSocket + REST API    |
-| Telegram   | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)     |
-| WhatsApp   | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device        |
-| IRC        | [IRC Setup](docs/irc-setup.md)               | TCP/TLS                 |
-| XMPP/Jabber | [XMPP Setup](docs/xmpp-setup.md)             | Client-to-server + MUC  |
-| Twitch      | [Twitch Setup](docs/twitch-setup.md)         | IRC over TLS + IRCv3    |
-| Nostr       | [Nostr Setup](docs/nostr-setup.md)           | Relay WebSocket         |
-| Matrix     | [Matrix Setup](docs/matrix-setup.md)         | Client-Server API       |
-| Twilio     | [Twilio Setup](docs/twilio-setup.md)         | REST API (polling)      |
-| Zulip      | [Zulip Setup](docs/zulip-setup.md)           | REST API + Event Queue  |
+| Platform    | Guide                                        | Connection Method         |
+| ----------- | -------------------------------------------- | ------------------------- |
+| Slack       | [Slack Setup](docs/slack-setup.md)           | Socket Mode (WebSocket)   |
+| Discord     | [Discord Setup](docs/discord-setup.md)       | Gateway (WebSocket)       |
+| Mattermost  | [Mattermost Setup](docs/mattermost-setup.md) | WebSocket + REST API      |
+| Telegram    | [Telegram Setup](docs/telegram-setup.md)     | Bot API (long-poll)       |
+| WhatsApp    | [WhatsApp Setup](docs/whatsapp-setup.md)     | Web multi-device          |
+| IRC         | [IRC Setup](docs/irc-setup.md)               | TCP/TLS                   |
+| XMPP/Jabber | [XMPP Setup](docs/xmpp-setup.md)             | Client-to-server + MUC    |
+| Twitch      | [Twitch Setup](docs/twitch-setup.md)         | IRC over TLS + IRCv3      |
+| Nostr       | [Nostr Setup](docs/nostr-setup.md)           | Relay WebSocket           |
+| Matrix      | [Matrix Setup](docs/matrix-setup.md)         | Client-Server API         |
+| Twilio      | [Twilio Setup](docs/twilio-setup.md)         | REST API (polling)        |
+| Zulip       | [Zulip Setup](docs/zulip-setup.md)           | REST API + Event Queue    |
+| iMessage    | [iMessage Setup](docs/imessage-setup.md)     | Messages DB + AppleScript |
 
 ---
 
@@ -669,22 +717,22 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 | Integration | Guide                                                 | Description                                                                                           |
 | ----------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Deployment  | [Deployment](docs/deployment.md)                      | Topologies from single-host to socket-export containers, sidecars, and Station - with the trust model |
+| Deployment  | [Deployment](docs/deployment.md)                      | Topologies from single-host to socket-export containers, sidecars, and Ghost - with the trust model    |
 | Agents      | [Agents](docs/agents.md)                              | Bind any harness to any bot - drivers, `when:` routing, and scheduled prompts                         |
 | Claude Code | [Claude Agent](docs/claude-agent.md)                  | Native Claude Code driver - persistent sessions, permission modes, tool allowlists                    |
 | Codex       | [Codex Agent](docs/codex-agent.md)                    | Native Codex driver - persistent app-server, sandbox and approval policy                              |
 | Claude Code | [Claude Code Hooks](docs/claude-code-hooks.md)        | Use pantalk as a hook to forward notifications, check chat on stop, and load context on session start |
-| Station     | [Pantalk Station](https://github.com/pantalk/station) | Prebuilt desktop with Pantalk, Codex, and Claude Code wired up - the fastest way to see it work       |
+| Ghost        | [Pantalk Ghost](https://github.com/pantalk/ghost)       | Prebuilt desktop with Pantalk, Codex, and Claude Code wired up - the fastest way to see it work       |
 
 ---
 
 ## Comparisons
 
-| Compared to                           | Guide                                      | In short                                                                                                                                                                      |
-| ------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Buzz](https://github.com/block/buzz) | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md) | Both make an agent a real participant in team conversation. Buzz pairs its own agents with its own workspace; Pantalk leaves both ends open and bridges what you already use. |
-| [Claude Tag](https://claude.com/product/tag) | [Pantalk vs Claude Tag](docs/pantalk-vs-claude-tag.md) | Claude Tag is one harness in one place - Claude, in Slack, managed by Anthropic. Pantalk brings the same teammate pattern to any harness across thirteen platforms, running on your own machine. |
-| [Codex in Slack](https://developers.openai.com/codex/integrations/slack) | [Pantalk vs Codex in Slack](docs/pantalk-vs-codex-slack.md) | Not a rival agent - the same one. OpenAI runs Codex in their cloud against GitHub, in Slack. Pantalk runs Codex on your machine against your working tree, in thirteen places. |
+| Compared to                                                              | Guide                                                       | In short                                                                                                                                                                                         |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Buzz](https://github.com/block/buzz)                                    | [Pantalk vs Buzz](docs/pantalk-vs-buzz.md)                  | Both make an agent a real participant in team conversation. Buzz pairs its own agents with its own workspace; Pantalk leaves both ends open and bridges what you already use.                    |
+| [Claude Tag](https://claude.com/product/tag)                             | [Pantalk vs Claude Tag](docs/pantalk-vs-claude-tag.md)      | Claude Tag is one harness in one place - Claude, in Slack, managed by Anthropic. Pantalk brings the same teammate pattern to any harness across thirteen platforms, running on your own machine. |
+| [Codex in Slack](https://developers.openai.com/codex/integrations/slack) | [Pantalk vs Codex in Slack](docs/pantalk-vs-codex-slack.md) | Not a rival agent - the same one. OpenAI runs Codex in their cloud against GitHub, in Slack. Pantalk runs Codex on your machine against your working tree, in thirteen places.                   |
 
 ---
 
@@ -698,11 +746,17 @@ Each platform requires its own app/bot setup before Pantalk can connect. See the
 
 ---
 
-## See Also
+## Ecosystem
 
-**[Pantalk Station](https://github.com/pantalk/station)** - A browser-accessible desktop with Pantalk, Codex, and Claude Code preinstalled, plus one-command deployments that stand up a real chat server next to it. The showcase for how little work this actually is.
+| Project                                       | Role                                                           |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| [zot](https://github.com/openzot/openzot)     | Run complete coding tasks autonomously from a single brief     |
+| [MCPShim](https://github.com/mcpshim/mcpshim) | Turn MCP servers and HTTP APIs into standard CLI commands      |
+| [crmkit](https://github.com/crmkit/crmkit)    | Give agents a shared CRM and system of record over HTTP or MCP |
 
-**[MCPShim](https://github.com/mcpshim/mcpshim)** - Use any MCP server as a standard CLI command. Pantalk plugs your harness into the platforms people talk on; MCPShim plugs tools into the harness. Together they form a complete agent infrastructure stack.
+[Pantalk Ghost](https://github.com/pantalk/ghost) is the browser-accessible
+showcase with Pantalk, Codex, Claude Code, and Kimi Code installed, plus
+one-command deployments for real chat servers.
 
 ---
 

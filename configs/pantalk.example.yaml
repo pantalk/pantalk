@@ -151,6 +151,10 @@ bots:
 #     driver: codex                       # starts: codex app-server --stdio
 #     workdir: /home/user/project         # repository Codex works in
 #     timeout: 900                        # maximum seconds per turn
+#     # An agent inherits nothing from the daemon, which keeps the bot tokens
+#     # resolved above out of its process. Name what it needs; HOME is how the
+#     # driver finds your local Codex login.
+#     env_inherit: [PATH, HOME, USER, SHELL, TMPDIR, TZ, LANG, 'LC_*']
 #     instructions: |
 #       You are the engineering assistant for this repository.
 #       Answer the user directly.
@@ -165,6 +169,7 @@ bots:
 #     driver: claude
 #     workdir: /home/user/project
 #     timeout: 900
+#     env_inherit: [PATH, HOME, USER, SHELL, TMPDIR, TZ, LANG, 'LC_*']
 #     instructions: |
 #       You are the engineering assistant for this repository.
 #       Answer the user directly.
@@ -181,12 +186,32 @@ bots:
 #     command: kimi acp                  # the ACP agent to run, exec'd directly
 #     workdir: /home/user/project        # sessions are stored per workdir
 #     timeout: 900
+#     env_inherit: [PATH, HOME, USER, SHELL, TMPDIR, TZ, LANG, 'LC_*']
 #     instructions: |
 #       You are the engineering assistant for this repository.
 #       Answer the user directly.
 #     acp:                               # every override is optional
 #       # model: kimi-k3                 # otherwise inherit the agent's config
 #       # approval: reject               # reject | approve | approve-for-session
+#
+# "acp.model" only applies to agents that implement the protocol's unstable
+# session/set_model. An agent that picks its own model logs a line saying the
+# setting was ignored - configure the model on the agent instead, as zot does
+# below. Note also that "approval" only constrains agents that ask permission
+# before acting; a fully autonomous agent never asks, so the policy is inert
+# and the agent's own sandboxing is what limits it.
+#
+#   - name: zot-engineering              # zot serves ACP with "zot acp"
+#     driver: acp
+#     command: zot acp --model kimi-k2.7-code
+#     workdir: /home/user/project
+#     timeout: 900
+#     env_inherit: [PATH, HOME, USER, SHELL, TMPDIR, TZ, LANG, 'LC_*']
+#     env:
+#       CHATBOTKIT_API_SECRET: $CHATBOTKIT_API_SECRET
+#     instructions: |
+#       You are the engineering assistant for this repository.
+#       Answer the user directly.
 #
 # Every driver accepts an agent-level "env" map. Entries are appended to the
 # environment the agent process would otherwise inherit from the daemon, and a

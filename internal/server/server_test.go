@@ -1042,12 +1042,51 @@ func TestResolveAgentEnvReportsUnsetVariable(t *testing.T) {
 }
 
 func TestResolveAgentEnvReturnsNilWhenUnset(t *testing.T) {
+	t.Setenv("PANTALK_SERVER_ENV_TEST", "daemon-secret")
+
 	env, err := resolveAgentEnv(config.AgentConfig{Name: "plain"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// Nil means "no entries", and procenv turns that into an empty child
+	// environment rather than an inherited one.
 	if env != nil {
-		t.Fatalf("env = %#v, want nil so the daemon environment is inherited", env)
+		t.Fatalf("env = %#v, want nil for a definition that configures nothing", env)
+	}
+}
+
+func TestResolveAgentEnvInheritsOnlyNamedVariables(t *testing.T) {
+	t.Setenv("PANTALK_SERVER_INHERITED", "passed-through")
+	t.Setenv("PANTALK_SERVER_SECRET", "must-not-leak")
+
+	env, err := resolveAgentEnv(config.AgentConfig{
+		Name:       "scoped",
+		EnvInherit: []string{"PANTALK_SERVER_INHERITED"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env["PANTALK_SERVER_INHERITED"] != "passed-through" {
+		t.Fatalf("named variable was not inherited: %#v", env)
+	}
+	if _, ok := env["PANTALK_SERVER_SECRET"]; ok {
+		t.Fatalf("an unnamed daemon variable leaked: %#v", env)
+	}
+}
+
+func TestResolveAgentEnvPrefersExplicitEntryOverInherited(t *testing.T) {
+	t.Setenv("PANTALK_SERVER_MODEL_URL", "daemon-value")
+
+	env, err := resolveAgentEnv(config.AgentConfig{
+		Name:       "override",
+		EnvInherit: []string{"PANTALK_SERVER_MODEL_URL"},
+		Env:        map[string]string{"PANTALK_SERVER_MODEL_URL": "config-value"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env["PANTALK_SERVER_MODEL_URL"] != "config-value" {
+		t.Fatalf("explicit entry did not win: %#v", env)
 	}
 }
 

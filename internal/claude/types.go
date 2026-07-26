@@ -10,13 +10,19 @@ import (
 
 // Config controls each managed Claude Code CLI invocation.
 //
-// The child inherits the parent's environment, including the user's existing
-// Claude Code authentication, settings, CLAUDE.md files, skills, and MCP
-// configuration. Env entries are appended on top of the inherited environment,
-// which lets a configuration point the CLI at any endpoint speaking the
-// Anthropic Messages protocol without disturbing the rest of the local setup.
+// The child inherits nothing from the daemon: Env is the complete environment
+// of the process. Local Claude Code authentication, settings, CLAUDE.md files,
+// skills, and MCP configuration are found through HOME, so a definition that
+// wants them must inherit HOME explicitly. Env is also how a configuration
+// points the CLI at any endpoint speaking the Anthropic Messages protocol.
 type Config struct {
-	Binary          string
+	Binary string
+
+	// Args are prefix arguments placed before the arguments this client builds
+	// for itself. They carry the container invocation when the agent is
+	// isolated, so Binary is the runtime and the harness lives in the image.
+	Args []string
+
 	Workdir         string
 	Model           string
 	Effort          string

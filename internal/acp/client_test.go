@@ -145,6 +145,34 @@ func TestLoadSessionRequiresCapability(t *testing.T) {
 	}
 }
 
+// An agent that resolves its own model (zot, for one) answers the unstable
+// session/set_model with "method not found". That is not a broken session: the
+// turn still runs on the model the agent was configured with.
+func TestNewSessionToleratesUnsupportedModelSelection(t *testing.T) {
+	client := startFakeClient(t, "set-model-unsupported", Config{Model: "kimi-k3"})
+	defer func() { _ = client.Close() }()
+
+	session, err := client.NewSession(context.Background(), "/workspace/project")
+	if err != nil {
+		t.Fatalf("NewSession returned an error: %v", err)
+	}
+	if session.ID != "S1" {
+		t.Fatalf("session ID = %q, want S1", session.ID)
+	}
+}
+
+// Any other failure from session/set_model still fails the session: the agent
+// implements the method and rejected this model.
+func TestNewSessionFailsOnRejectedModel(t *testing.T) {
+	client := startFakeClient(t, "set-model-failed", Config{Model: "kimi-k3"})
+	defer func() { _ = client.Close() }()
+
+	_, err := client.NewSession(context.Background(), "/workspace/project")
+	if err == nil || !strings.Contains(err.Error(), `select acp model "kimi-k3"`) {
+		t.Fatalf("expected a model selection error, got %v", err)
+	}
+}
+
 func startFakeClient(t *testing.T, scenario string, cfg Config) *Client {
 	t.Helper()
 	client, err := startFakeClientResult(t, scenario, cfg)
@@ -158,17 +186,28 @@ func startFakeClientResult(t *testing.T, scenario string, cfg Config) (*Client, 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	cfg.Env = withHelperMarker(cfg.Env)
 	return start(ctx, cfg, func(processCtx context.Context, _ Config) (*exec.Cmd, error) {
-		cmd := exec.CommandContext(
+		return exec.CommandContext(
 			processCtx,
 			os.Args[0],
 			"-test.run=TestACPHelperProcess",
 			"--",
 			scenario,
-		)
-		cmd.Env = append(os.Environ(), helperProcessEnv+"=1")
-		return cmd, nil
+		), nil
 	})
+}
+
+// withHelperMarker marks the re-executed test binary as the fake agent. The
+// child inherits nothing from this process, so the marker has to travel
+// through the configured environment like any other variable.
+func withHelperMarker(env map[string]string) map[string]string {
+	marked := make(map[string]string, len(env)+1)
+	for key, value := range env {
+		marked[key] = value
+	}
+	marked[helperProcessEnv] = "1"
+	return marked
 }
 
 func TestACPHelperProcess(t *testing.T) {
@@ -207,6 +246,18 @@ func TestACPHelperProcess(t *testing.T) {
 		agent.drain()
 	case "no-load-capability":
 		agent.initialize(false)
+		agent.drain()
+	case "set-model-unsupported":
+		agent.initialize(true)
+		agent.newSession("S1")
+		setModel := agent.expectMethod("session/set_model")
+		agent.respondError(setModel.ID, -32601, "Method not found")
+		agent.drain()
+	case "set-model-failed":
+		agent.initialize(true)
+		agent.newSession("S1")
+		setModel := agent.expectMethod("session/set_model")
+		agent.respondError(setModel.ID, -32602, "no such model")
 		agent.drain()
 	default:
 		t.Fatalf("unknown helper process scenario %q", scenario)
@@ -506,6 +557,14 @@ func (a fakeAgent) respond(id json.RawMessage, result any) {
 		message["result"] = nil
 	}
 	a.send(message)
+}
+
+func (a fakeAgent) respondError(id json.RawMessage, code int64, message string) {
+	a.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	})
 }
 
 func (a fakeAgent) notify(method string, params any) {

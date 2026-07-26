@@ -22,6 +22,7 @@ import (
 	"github.com/pantalk/pantalk/internal/codex"
 	"github.com/pantalk/pantalk/internal/config"
 	"github.com/pantalk/pantalk/internal/media"
+	"github.com/pantalk/pantalk/internal/procenv"
 	"github.com/pantalk/pantalk/internal/protocol"
 	"github.com/pantalk/pantalk/internal/store"
 	"github.com/pantalk/pantalk/internal/upstream"
@@ -611,8 +612,16 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			}
 			runtime = r
 		case "codex":
+			invocation, err := driverInvocation(acfg, "codex", acfg.Codex.Binary, env)
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return err
+			}
+
 			client, err := s.startCodexClient(runtimeCtx, codex.Config{
-				Binary: acfg.Codex.Binary,
+				Binary: invocation[0],
+				Args:   invocation[1:],
 				Env:    env,
 			})
 			if err != nil {
@@ -621,14 +630,31 @@ func (s *Server) startConnectors(cfg config.Config) error {
 				return fmt.Errorf("start codex agent %q: %w", acfg.Name, err)
 			}
 
+			// Codex sandboxes its own tool calls with bubblewrap, which needs
+			// user namespaces an unprivileged container usually denies. When
+			// Pantalk built the container it is already the boundary, so the
+			// inner sandbox is turned off rather than left to fail. An explicit
+			// setting always wins.
+			sandbox := acfg.Codex.Sandbox
+			if acfg.Isolation.Enabled() && strings.TrimSpace(sandbox) == "" {
+				sandbox = codexSandboxFullAccess
+			}
+
+			// Codex receives the working directory as a protocol field, so an
+			// isolated agent wants the path inside its container.
+			workdir := acfg.Workdir
+			if strings.TrimSpace(workdir) == "" {
+				workdir = acfg.Isolation.Workdir()
+			}
+
 			r, err := agent.NewCodexRuntime(runtimeCtx, agent.CodexRuntimeConfig{
 				Name:         acfg.Name,
-				Workdir:      acfg.Workdir,
+				Workdir:      workdir,
 				Instructions: acfg.Instructions,
 				Timeout:      time.Duration(acfg.Timeout) * time.Second,
 				Model:        acfg.Codex.Model,
 				Effort:       acfg.Codex.Effort,
-				Sandbox:      acfg.Codex.Sandbox,
+				Sandbox:      sandbox,
 				Approval:     acfg.Codex.ApprovalPolicy,
 			}, client, s.notifications, s.deliverAgentReply)
 			if err != nil {
@@ -639,9 +665,25 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			}
 			runtime = r
 		case "claude":
+			invocation, err := driverInvocation(acfg, "claude", acfg.Claude.Binary, env)
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return err
+			}
+
+			// Claude Code's working directory becomes the child process's own
+			// directory on this host. An isolated agent's directory lives in
+			// the container and is set by the invocation, so none is passed.
+			claudeWorkdir := acfg.Workdir
+			if acfg.Isolation.Enabled() {
+				claudeWorkdir = ""
+			}
+
 			client, err := s.startClaudeClient(claude.Config{
-				Binary:          acfg.Claude.Binary,
-				Workdir:         acfg.Workdir,
+				Binary:          invocation[0],
+				Args:            invocation[1:],
+				Workdir:         claudeWorkdir,
 				Model:           acfg.Claude.Model,
 				Effort:          acfg.Claude.Effort,
 				PermissionMode:  acfg.Claude.PermissionMode,
@@ -669,9 +711,19 @@ func (s *Server) startConnectors(cfg config.Config) error {
 			}
 			runtime = r
 		case "acp":
+			// Isolation rewrites the invocation into a container run. The
+			// harness stays argv[0] of the configured command, which is what
+			// the allowlist checked, so containment never widens what may run.
+			invocation, err := acfg.Isolation.Wrap(acfg.Name, agent.Command(acfg.Command), env)
+			if err != nil {
+				stopRuntimes(runners)
+				runtimeCancel()
+				return err
+			}
+
 			client, err := s.startACPClient(runtimeCtx, acp.Config{
-				Binary:   acfg.Command[0],
-				Args:     acfg.Command[1:],
+				Binary:   invocation[0],
+				Args:     invocation[1:],
 				Model:    acfg.ACP.Model,
 				Approval: acfg.ACP.Approval,
 				Env:      env,
@@ -682,9 +734,16 @@ func (s *Server) startConnectors(cfg config.Config) error {
 				return fmt.Errorf("start acp agent %q: %w", acfg.Name, err)
 			}
 
+			// An isolated agent's sessions default to the workspace inside its
+			// container; a host workdir would name a path the agent cannot see.
+			workdir := acfg.Workdir
+			if strings.TrimSpace(workdir) == "" {
+				workdir = acfg.Isolation.Workdir()
+			}
+
 			r, err := agent.NewACPRuntime(runtimeCtx, agent.ACPRuntimeConfig{
 				Name:         acfg.Name,
-				Workdir:      acfg.Workdir,
+				Workdir:      workdir,
 				Instructions: acfg.Instructions,
 				Timeout:      time.Duration(acfg.Timeout) * time.Second,
 			}, client, s.notifications, s.deliverAgentReply)
@@ -804,16 +863,19 @@ func (s *Server) startConnectors(cfg config.Config) error {
 	return nil
 }
 
-// resolveAgentEnv resolves an agent's environment overrides, expanding
-// $ENV_VAR references so a config can name a secret without containing it.
-// Nil is returned when nothing is configured, leaving plain inheritance of the
-// daemon's environment in place.
+// resolveAgentEnv builds the complete environment for an agent's processes,
+// expanding $ENV_VAR references so a config can name a secret without
+// containing it. Nothing is inherited from the daemon unless env_inherit names
+// it, which is what keeps one agent's credentials - and every bot token the
+// daemon resolved - out of another agent's process.
+//
+// Explicit env entries win over inherited ones of the same name.
 func resolveAgentEnv(acfg config.AgentConfig) (map[string]string, error) {
-	if len(acfg.Env) == 0 {
-		return nil, nil
+	env := procenv.Inherit(acfg.EnvInherit)
+	if env == nil {
+		env = make(map[string]string, len(acfg.Env))
 	}
 
-	env := make(map[string]string, len(acfg.Env))
 	for key, value := range acfg.Env {
 		resolved, err := config.ResolveCredential(value)
 		if err != nil {
@@ -821,7 +883,38 @@ func resolveAgentEnv(acfg config.AgentConfig) (map[string]string, error) {
 		}
 		env[key] = resolved
 	}
+
+	if len(env) == 0 {
+		return nil, nil
+	}
 	return env, nil
+}
+
+// codexSandboxFullAccess disables Codex's own sandbox. It is only ever applied
+// when Pantalk created the container that replaces it.
+const codexSandboxFullAccess = "danger-full-access"
+
+// driverInvocation resolves what a driver actually executes. An explicit
+// command overrides the driver's binary — useful for wrappers, pinned
+// versions, or a path that only exists inside an image — and isolation then
+// wraps whichever won into a container run. The returned argv is always
+// non-empty: element 0 is the program, the rest are prefix arguments the
+// driver places before its own.
+func driverInvocation(
+	acfg config.AgentConfig,
+	defaultBinary string,
+	configuredBinary string,
+	env map[string]string,
+) (agent.Command, error) {
+	harness := agent.Command(acfg.Command)
+	if len(harness) == 0 {
+		binary := strings.TrimSpace(configuredBinary)
+		if binary == "" {
+			binary = defaultBinary
+		}
+		harness = agent.Command{binary}
+	}
+	return acfg.Isolation.Wrap(acfg.Name, harness, env)
 }
 
 func stopRuntimes(runtimes []agent.Runtime) {

@@ -75,7 +75,7 @@ If your team lives in Slack, you are on a Team or Enterprise plan, and you want 
 
 - **Thirteen platforms instead of one.** This is the whole thesis. Claude Tag brings an agent to the place Anthropic supports; Pantalk brings one to the places your people actually are. Your colleagues are in Slack, your community is on Discord or IRC, your customers are on WhatsApp, your on-call gets SMS - the same agent definition serves all of them, each conversation with its own isolated session.
 - **Reachable from a phone with no app and no account.** WhatsApp, SMS, and iMessage mean anyone with a phone number can reach your agent, including people who will never be provisioned a seat in your Slack.
-- **Any harness, not just Claude.** `driver:` is a one-line edit. Route `#code-review` to Claude Code and everything else to Codex, or replace both next quarter without touching a single platform integration. [Pantalk Station](https://github.com/pantalk/station) ships both harnesses preinstalled and demonstrates exactly this swap.
+- **Any harness, not just Claude.** `driver:` is a one-line edit. Route `#code-review` to Claude Code and everything else to Codex, or replace both next quarter without touching a single platform integration. [Pantalk Ghost](https://github.com/pantalk/ghost) ships both harnesses preinstalled and demonstrates exactly this swap.
 - **Runs where your code actually is.** The harness executes in a working directory on your machine, with your local checkout, your `CLAUDE.md`, your skills, your MCP servers, and your existing CLI authentication. That covers self-hosted GitLab, Gitea, monorepos too large to sync, private networks, and anything else a cloud sandbox with GitHub-only repository access cannot see.
 - **No plan gate.** Claude Tag is beta for Enterprise and Team. Pantalk runs whatever CLI you already have logged in - a personal Claude Code or Codex login is enough to have an agent answering messages this afternoon.
 - **Direct messages, and platforms you don't control.** Pantalk treats DMs as a first-class route on every provider that distinguishes them, and you can bridge a customer's Slack, a community's IRC channel, or a Nostr relay - none of which you could ask to install an org-wide app.
@@ -112,4 +112,4 @@ The honest framing: Claude Tag is how Claude becomes a member of your Slack work
 - [Claude Agent](claude-agent.md) / [Codex Agent](codex-agent.md) - the native harness drivers
 - [Claude Code Hooks](claude-code-hooks.md) - use Pantalk as a Claude Code hook
 - [Slack Setup](slack-setup.md) - connecting Pantalk's own Slack bot
-- [Pantalk Station](https://github.com/pantalk/station) - prebuilt desktop showing the whole thing working
+- [Pantalk Ghost](https://github.com/pantalk/ghost) - prebuilt desktop showing the whole thing working
