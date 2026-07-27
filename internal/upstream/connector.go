@@ -36,10 +36,11 @@ type AttachmentSender interface {
 // pulse; platforms let the status decay after a few seconds, so the daemon's
 // typing lease re-pulses on a cadence until the reply is sent.
 //
-// Implemented by: telegram. Remaining connectors with a native equivalent
-// that should grow this: slack, discord, mattermost, matrix, whatsapp, irc
-// (via /me fallback is questionable - likely never), twilio (no equivalent),
-// zulip, imessage. XMPP implements XEP-0085 chat states.
+// Implemented by: telegram, nostr (kind-20002, NIP-29 groups only). Remaining
+// connectors with a native equivalent that should grow this: slack, discord,
+// mattermost, matrix, whatsapp, irc (via /me fallback is questionable -
+// likely never), twilio (no equivalent), zulip, imessage. XMPP implements
+// XEP-0085 chat states.
 type TypingIndicator interface {
 	Typing(ctx context.Context, request protocol.Request) error
 }

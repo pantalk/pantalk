@@ -74,7 +74,7 @@ If you can move your team, and you want one audited log for everything, Buzz is 
 
 - **Meets humans where they already are.** This is the whole thesis. The hardest part of agent adoption is not the agent - it is getting people to change where they talk. Pantalk's adoption cost is zero: your colleagues keep using Slack, your customers keep using WhatsApp, your on-call keeps getting SMS.
 - **Thirteen platforms, one interface.** One reusable agent definition can be bound by multiple bots. A single runtime can be mentioned in Slack, DM'd on Telegram or Nostr, and texted over Twilio while each conversation keeps an isolated session.
-- **Neither end is welded.** The harness is a `driver:` line and the platform is a `type:` line, and they are declared in separate blocks that never reference each other. Route `#code-review` to Claude Code and everything else to Codex; replace both next quarter without re-doing a single platform integration. There is a working example of exactly this in [Pantalk Station](https://github.com/pantalk/station), which ships both harnesses preinstalled and swaps the messaging system with a deployment recipe.
+- **Neither end is welded.** The harness is a `driver:` line and the platform is a `type:` line, and they are declared in separate blocks that never reference each other. Route `#code-review` to Claude Code and everything else to Codex; replace both next quarter without re-doing a single platform integration. There is a working example of exactly this in [Pantalk Ghost](https://github.com/pantalk/ghost), which ships both harnesses preinstalled and swaps the messaging system with a deployment recipe.
 - **Reachable from a phone with no app.** WhatsApp, SMS, and iMessage mean your agent is reachable by anyone with a phone number, including people who will never install anything.
 - **No infrastructure.** A single binary and a SQLite file. No Postgres, no Redis, no search cluster, no server to operate.
 - **Works with platforms you don't control.** You can bridge a customer's Slack or a community's IRC channel. You cannot ask them to join your workspace.
@@ -111,4 +111,4 @@ The shape that would genuinely add something is the reverse: automatically bridg
 - [Claude Agent](claude-agent.md) / [Codex Agent](codex-agent.md) - the native harness drivers
 - [Claude Code Hooks](claude-code-hooks.md) - use Pantalk as a Claude Code hook
 - [Platform Setup](../README.md#platform-setup) - per-platform connection guides
-- [Pantalk Station](https://github.com/pantalk/station) - prebuilt desktop showing the whole thing working
+- [Pantalk Ghost](https://github.com/pantalk/ghost) - prebuilt desktop showing the whole thing working

@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/pantalk/pantalk/internal/agent"
 )
 
 func TestResolveCredential_Literal(t *testing.T) {
@@ -105,6 +108,35 @@ bots:
 	}
 	if cfg.Bots[0].Name != "bot-a" {
 		t.Fatalf("unexpected bot name: %s", cfg.Bots[0].Name)
+	}
+}
+
+func TestLoad_AgentEnvInherit(t *testing.T) {
+	path := writeConfig(t, `
+agents:
+  - name: engineering
+    driver: claude
+    env_inherit: [PATH, HOME, 'LC_*']
+    env:
+      ANTHROPIC_BASE_URL: https://api.example.com/anthropic
+
+bots:
+  - name: bot-a
+    type: local
+    agents:
+      - agent: engineering
+        when: true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(cfg.Agents))
+	}
+	want := []string{"PATH", "HOME", "LC_*"}
+	if !slices.Equal(cfg.Agents[0].EnvInherit, want) {
+		t.Fatalf("env_inherit = %v, want %v", cfg.Agents[0].EnvInherit, want)
 	}
 }
 
@@ -597,6 +629,127 @@ agents:
 	}
 }
 
+// An isolated agent still names its harness, so the allowlist keeps applying
+// to the harness rather than to the container runtime. This is the whole point
+// of compiling the invocation instead of having operators write docker lines.
+func TestLoad_IsolatedAgentPassesAllowlistWithoutAllowExec(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: acp
+    command: zot acp
+    isolation: container
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Agents[0].Isolation.Enabled() {
+		t.Fatalf("isolation = %#v", cfg.Agents[0].Isolation)
+	}
+}
+
+func TestLoad_IsolationRejectsUnknownMode(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: acp
+    command: zot acp
+    isolation: vm
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unknown isolation mode") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// A harness with no published image must fail while loading the config, not
+// when the agent first tries to start.
+func TestLoad_IsolationRequiresImageForUnknownHarness(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: helper
+    driver: acp
+    command: goose acp
+    isolation: container
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "isolation.image") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// Isolation applies to the driver-managed harnesses too, and the image
+// requirement is reported against the driver's own binary when no command
+// overrides it.
+func TestLoad_IsolationOnDriverManagedHarness(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: claude
+    isolation: container
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "isolation.image") {
+		t.Fatalf("error = %v, want the image requirement for claude", err)
+	}
+
+	path = writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: claude
+    isolation:
+      mode: container
+      image: ghcr.io/acme/claude:v1
+`)
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+// command overrides the driver's binary on every driver, which is what lets an
+// agent name a wrapper, a pinned version, or a path inside an image.
+func TestLoad_CommandOverridesDriverBinary(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: claude
+    command: claude --mcp-debug
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if strings.Join(cfg.Agents[0].Command, " ") != "claude --mcp-debug" {
+		t.Fatalf("command = %#v", cfg.Agents[0].Command)
+	}
+}
+
+func TestLoad_CommandAndDriverBinaryConflict(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: claude
+    command: claude
+    claude:
+      binary: /opt/claude
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// An overriding command is exec'd directly, so it faces the same allowlist as
+// the command and acp drivers rather than slipping past it.
+func TestLoad_DriverCommandFacesAllowlist(t *testing.T) {
+	path := writeConfig(t, minimalBot+`
+agents:
+  - name: reviewer
+    driver: claude
+    command: /usr/bin/whatever
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "not in the allowed list") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLoad_AgentRejectsInvalidEnv(t *testing.T) {
 	tests := []struct {
 		name string
@@ -847,13 +1000,17 @@ agents:
     command: opencode
   - name: a7
     command: gemini
+  - name: a8
+    command: kimi
+  - name: a9
+    command: zot
 `)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cfg.Agents) != 7 {
-		t.Fatalf("expected 7 agents, got %d", len(cfg.Agents))
+	if len(cfg.Agents) != len(agent.AllowedCommands) {
+		t.Fatalf("expected one agent per allowed command (%d), got %d", len(agent.AllowedCommands), len(cfg.Agents))
 	}
 }
 

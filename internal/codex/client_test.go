@@ -267,17 +267,28 @@ func startFakeClientResult(t *testing.T, scenario string, cfg Config) (*Client, 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	cfg.Env = withHelperMarker(cfg.Env)
 	return start(ctx, cfg, func(processCtx context.Context, _ Config) (*exec.Cmd, error) {
-		cmd := exec.CommandContext(
+		return exec.CommandContext(
 			processCtx,
 			os.Args[0],
 			"-test.run=TestCodexHelperProcess",
 			"--",
 			scenario,
-		)
-		cmd.Env = append(os.Environ(), helperProcessEnv+"=1")
-		return cmd, nil
+		), nil
 	})
+}
+
+// withHelperMarker marks the re-executed test binary as the fake app-server.
+// The child inherits nothing from this process, so the marker has to travel
+// through the configured environment like any other variable.
+func withHelperMarker(env map[string]string) map[string]string {
+	marked := make(map[string]string, len(env)+1)
+	for key, value := range env {
+		marked[key] = value
+	}
+	marked[helperProcessEnv] = "1"
+	return marked
 }
 
 func TestCodexHelperProcess(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -320,7 +321,15 @@ func (c *Client) NewSession(ctx context.Context, cwd string) (Session, error) {
 			"sessionId": response.SessionID,
 			"modelId":   modelID,
 		}, nil)
-		if err != nil {
+		switch {
+		case isMethodNotFound(err):
+			// session/set_model is an unstable ACP method. Agents that resolve
+			// their own model never implement it, and refusing the session over
+			// that would lock out conforming agents - the turn still runs, on
+			// the model the agent was configured with. Say so once, because a
+			// silently ignored setting is worse than a slow one.
+			log.Printf("acp: agent does not implement session/set_model; model %q must be configured on the agent itself", model)
+		case err != nil:
 			return Session{}, fmt.Errorf("select acp model %q: %w", model, err)
 		}
 	}

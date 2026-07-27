@@ -382,23 +382,27 @@ func (c *IMessageConnector) handleIncomingMessage(row chatDBRow) {
 	})
 }
 
+// escapeAppleScriptString makes a value safe to interpolate into an
+// AppleScript string literal. Backslashes are escaped first so the escapes
+// added afterwards are not themselves escaped. AppleScript string literals
+// cannot span lines, so a raw newline, carriage return, or tab has to become
+// its escape sequence or osascript fails to compile the whole script.
+func escapeAppleScriptString(value string) string {
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	escaped = strings.ReplaceAll(escaped, "\n", `\n`)
+	escaped = strings.ReplaceAll(escaped, "\r", `\r`)
+	escaped = strings.ReplaceAll(escaped, "\t", `\t`)
+	return escaped
+}
+
 // sendViaAppleScript sends a message through Messages.app using osascript.
 // The script tries the modern AppleScript syntax (account/participant, macOS
 // Monterey+) first and falls back to the legacy syntax (service/buddy) if
 // the modern form fails. This covers macOS 10.13 through Sequoia+.
 func (c *IMessageConnector) sendViaAppleScript(ctx context.Context, recipient, text string) error {
-	// Escape backslashes and quotes for AppleScript string literals.
-	escapedText := strings.ReplaceAll(text, `\`, `\\`)
-	escapedText = strings.ReplaceAll(escapedText, `"`, `\"`)
-	// Newlines and carriage returns must be escaped to AppleScript \n / \r
-	// so they stay within the quoted string rather than breaking the script
-	// across lines.
-	escapedText = strings.ReplaceAll(escapedText, "\n", `\n`)
-	escapedText = strings.ReplaceAll(escapedText, "\r", `\r`)
-	escapedText = strings.ReplaceAll(escapedText, "\t", `\t`)
-
-	escapedRecipient := strings.ReplaceAll(recipient, `\`, `\\`)
-	escapedRecipient = strings.ReplaceAll(escapedRecipient, `"`, `\"`)
+	escapedText := escapeAppleScriptString(text)
+	escapedRecipient := escapeAppleScriptString(recipient)
 
 	// Modern syntax (macOS Monterey / Ventura / Sonoma / Sequoia):
 	//   id of 1st account  →  account id  →  participant

@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,6 +22,17 @@ import (
 )
 
 const nostrOperationTimeout = 20 * time.Second
+
+// Ephemeral presence and typing kinds. These are not part of NIP-29 itself;
+// they are the convention NIP-29 relays that support liveness have settled on
+// (Buzz among them). Relays that do not recognise them reject the event, which
+// is why both are published best-effort.
+const (
+	nostrKindPresence = 20001
+	nostrKindTyping   = 20002
+
+	nostrPresenceOnline = "online"
+)
 
 type nostrDestinationKind int
 
@@ -68,6 +80,9 @@ type NostrConnector struct {
 	signer      keyer.KeySigner
 	publicKey   string
 	relays      []string
+	displayName string
+	about       string
+	picture     string
 
 	mu            sync.RWMutex
 	pool          *nostr.SimplePool
@@ -114,6 +129,9 @@ func NewNostrConnector(bot config.BotConfig, publish func(protocol.Event)) (*Nos
 		signer:        signer,
 		publicKey:     publicKey,
 		relays:        relays,
+		displayName:   strings.TrimSpace(bot.DisplayName),
+		about:         strings.TrimSpace(bot.About),
+		picture:       strings.TrimSpace(bot.Picture),
 		nip28Channels: make(map[string]struct{}),
 		nip29Groups:   make(map[string]nostrDestination),
 	}
@@ -223,8 +241,16 @@ func (c *NostrConnector) connectAndRun(ctx context.Context, onEstablished func()
 		c.mu.Unlock()
 	}()
 
+	// Relays that only accept a fixed kind set (Buzz, for one) reject the DM
+	// relay list. That costs NIP-17 discovery, not the session: group and
+	// channel subscriptions below are unaffected, so this stays best-effort.
 	if err := c.publishDMRelayList(sessionCtx); err != nil {
-		return fmt.Errorf("publish NIP-17 DM relay list: %w", err)
+		log.Printf("[nostr:%s] DM relay list rejected, continuing without NIP-17 discovery: %v", c.botName, err)
+	}
+
+	// A bot with no kind:0 shows up as a bare pubkey with no name or avatar.
+	if err := c.publishProfile(sessionCtx); err != nil {
+		log.Printf("[nostr:%s] profile publish failed, bot may appear unnamed: %v", c.botName, err)
 	}
 
 	since := nostr.Now()
@@ -256,6 +282,8 @@ func (c *NostrConnector) connectAndRun(ctx context.Context, onEstablished func()
 	directMessages := nip17.ListenForMessages(sessionCtx, pool, c.signer, c.relays, since)
 	go c.forwardDirectMessages(sessionCtx, directMessages, ended)
 
+	c.publishPresence(sessionCtx, nostrPresenceOnline)
+
 	c.publishStatus("connector online")
 	if onEstablished != nil {
 		onEstablished()
@@ -271,6 +299,9 @@ func (c *NostrConnector) connectAndRun(ctx context.Context, onEstablished func()
 		case err := <-ended:
 			return err
 		case <-heartbeat.C:
+			// Presence is ephemeral and decays, so the heartbeat doubles as
+			// the keepalive that holds the bot "online" between messages.
+			c.publishPresence(sessionCtx, nostrPresenceOnline)
 			c.publishHeartbeat()
 		}
 	}
@@ -605,6 +636,88 @@ func (c *NostrConnector) publishDMRelayList(ctx context.Context) error {
 	}
 	if err := c.publishEvent(ctx, c.relays, event); err != nil {
 		return fmt.Errorf("publish relay list: %w", err)
+	}
+	return nil
+}
+
+// publishProfile announces the bot's kind:0 metadata so it appears as a named
+// participant rather than a bare pubkey. Fields left unset in config fall back
+// to the bot name, which is always present.
+func (c *NostrConnector) publishProfile(ctx context.Context) error {
+	metadata := map[string]string{"name": c.botName}
+	if c.displayName != "" {
+		metadata["display_name"] = c.displayName
+		metadata["name"] = c.displayName
+	}
+	if c.about != "" {
+		metadata["about"] = c.about
+	}
+	if c.picture != "" {
+		metadata["picture"] = c.picture
+	}
+
+	content, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("encode profile metadata: %w", err)
+	}
+
+	event := nostr.Event{
+		Kind:      nostr.KindProfileMetadata,
+		CreatedAt: nostr.Now(),
+		Tags:      nostr.Tags{},
+		Content:   string(content),
+	}
+	if err := c.signer.SignEvent(ctx, &event); err != nil {
+		return fmt.Errorf("sign profile: %w", err)
+	}
+	if err := c.publishEvent(ctx, c.relays, event); err != nil {
+		return fmt.Errorf("publish profile: %w", err)
+	}
+	return nil
+}
+
+// publishPresence emits an ephemeral presence event. The kind is outside the
+// range every relay implements, so rejection is logged and ignored rather than
+// treated as a session failure.
+func (c *NostrConnector) publishPresence(ctx context.Context, status string) {
+	event := nostr.Event{
+		Kind:      nostrKindPresence,
+		CreatedAt: nostr.Now(),
+		Tags:      nostr.Tags{},
+		Content:   status,
+	}
+	if err := c.signer.SignEvent(ctx, &event); err != nil {
+		log.Printf("[nostr:%s] sign presence: %v", c.botName, err)
+		return
+	}
+	if err := c.publishEvent(ctx, c.relays, event); err != nil {
+		log.Printf("[nostr:%s] presence not accepted by relay: %v", c.botName, err)
+	}
+}
+
+// Typing implements TypingIndicator with an ephemeral typing event scoped to a
+// group. Only NIP-29 destinations carry one: NIP-28 channels and NIP-17 DMs
+// have no equivalent, and reporting an error for them would make the daemon's
+// typing lease retry something that can never succeed.
+func (c *NostrConnector) Typing(ctx context.Context, request protocol.Request) error {
+	destination, err := resolveNostrDestination(request)
+	if err != nil {
+		return err
+	}
+	if destination.kind != nostrDestinationNIP29 {
+		return nil
+	}
+
+	event := nostr.Event{
+		Kind:      nostrKindTyping,
+		CreatedAt: nostr.Now(),
+		Tags:      nostr.Tags{nostr.Tag{"h", destination.id}},
+	}
+	if err := c.signer.SignEvent(ctx, &event); err != nil {
+		return fmt.Errorf("sign typing indicator: %w", err)
+	}
+	if err := c.publishEvent(ctx, []string{destination.relay}, event); err != nil {
+		return fmt.Errorf("publish typing indicator: %w", err)
 	}
 	return nil
 }

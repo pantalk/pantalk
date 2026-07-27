@@ -190,7 +190,8 @@ func newCommand(processCtx context.Context, cfg Config) (*exec.Cmd, error) {
 	if binary == "" {
 		binary = "codex"
 	}
-	return exec.CommandContext(processCtx, binary, "app-server", "--stdio"), nil
+	args := append(append([]string{}, cfg.Args...), "app-server", "--stdio")
+	return exec.CommandContext(processCtx, binary, args...), nil
 }
 
 func start(ctx context.Context, cfg Config, factory commandFactory) (*Client, error) {

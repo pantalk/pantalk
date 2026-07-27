@@ -74,7 +74,7 @@ If your code is on GitHub, your team is on Slack, and everyone already has a Cha
 - **Works against your actual working tree.** A cloud environment sees the default branch of a repository it has cloned. Pantalk points Codex at a directory: the branch you are on, the changes you have not committed, the generated artifacts, the sibling checkouts, the local database it needs to run tests against. Everything a cloud sandbox structurally cannot reach - private networks, self-hosted GitLab or Gitea, a monorepo too large to sync, code that is not in GitHub at all - is just a path.
 - **One subscription, whole team.** This is the pricing consequence of the topology, and it is significant. Codex in Slack needs every participant to hold their own ChatGPT plan, connect GitHub, and configure an environment. Pantalk runs one authenticated Codex install and everyone else reaches it by DM or mention from the chat client they already have open. Designers, PMs, and support get the same agent without a seat, a CLI, or a GitHub account.
 - **You set the sandbox and approval policy.** `sandbox: read-only`, `workspace-write`, or `danger-full-access`, and `approval_policy` alongside it, declared in YAML and inherited from your local Codex configuration.
-- **Not welded to Codex.** `driver: codex` becomes `driver: claude` in one line, and every platform connection is untouched. Route `#code-review` to Claude Code and everything else to Codex, in the same config. [Pantalk Station](https://github.com/pantalk/station) ships both preinstalled so you can try the swap immediately.
+- **Not welded to Codex.** `driver: codex` becomes `driver: claude` in one line, and every platform connection is untouched. Route `#code-review` to Claude Code and everything else to Codex, in the same config. [Pantalk Ghost](https://github.com/pantalk/ghost) ships both preinstalled so you can try the swap immediately.
 - **Explicit routing and schedules.** Ordered `when:` expressions decide which agent answers which conversation, first match wins, plus time bindings for recurring work like a morning summary posted to `#engineering`.
 - **Reachable from a phone with no app.** WhatsApp, SMS, and iMessage reach anyone with a phone number, including people who will never be provisioned anything.
 - **Your history stays local.** Message history lives in a SQLite file on your host.
@@ -118,4 +118,4 @@ Codex in Slack is how OpenAI gets Codex into one place. Pantalk is how you get C
 - [Pantalk vs Buzz](pantalk-vs-buzz.md) - the same comparison against a workspace-first approach
 - [Agents](agents.md) - bind any harness to any bot with drivers and `when:` routing
 - [Slack Setup](slack-setup.md) - connecting Pantalk's own Slack bot
-- [Pantalk Station](https://github.com/pantalk/station) - prebuilt desktop showing the whole thing working
+- [Pantalk Ghost](https://github.com/pantalk/ghost) - prebuilt desktop showing the whole thing working

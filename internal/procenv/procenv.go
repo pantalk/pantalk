@@ -1,41 +1,86 @@
-// Package procenv applies configured environment overrides to the child
-// processes Pantalk launches for agents.
+// Package procenv builds the environment for the child processes Pantalk
+// launches for agents.
 package procenv
 
 import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 )
 
-// Apply appends overrides to a command's environment.
+// Apply sets a command's environment to exactly the supplied entries.
 //
-// A command that has not set an explicit environment inherits the daemon's,
-// matching exec's own default, so agents keep the user's existing CLI
-// authentication, settings, and PATH. Overrides are appended last and sorted,
-// so they win over inherited values and repeated invocations produce an
-// identical environment. With no overrides the command is left untouched and
-// plain inheritance remains in effect.
-func Apply(cmd *exec.Cmd, overrides map[string]string) {
-	if cmd == nil || len(overrides) == 0 {
+// Child processes inherit nothing from the daemon by default. The daemon's
+// environment holds every bot credential a config resolved through $NAME, so
+// inheriting it would hand each agent the tokens of every service Pantalk
+// serves. An agent receives a variable only when its definition names one,
+// either as an explicit env entry or through env_inherit.
+//
+// The environment is always set, never left nil, so an agent with no
+// configured entries runs with an empty environment rather than falling back
+// to exec's inheriting default. Entries are sorted, so repeated invocations
+// produce an identical environment.
+func Apply(cmd *exec.Cmd, entries map[string]string) {
+	if cmd == nil {
 		return
 	}
 
-	base := cmd.Env
-	if base == nil {
-		base = os.Environ()
-	}
-
-	keys := make([]string, 0, len(overrides))
-	for key := range overrides {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
-	env := make([]string, 0, len(base)+len(keys))
-	env = append(env, base...)
+	env := make([]string, 0, len(keys))
 	for _, key := range keys {
-		env = append(env, key+"="+overrides[key])
+		env = append(env, key+"="+entries[key])
 	}
 	cmd.Env = env
+}
+
+// Inherit copies the named variables from the daemon's environment. Names that
+// are unset are skipped, so an optional passthrough does not have to exist on
+// every host. A name may be written with a trailing "*" to copy every variable
+// sharing that prefix, which keeps families such as LC_* to one entry.
+func Inherit(names []string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+
+	var prefixes []string
+	inherited := make(map[string]string, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if strings.HasSuffix(name, "*") {
+			prefixes = append(prefixes, strings.TrimSuffix(name, "*"))
+			continue
+		}
+		if value, ok := os.LookupEnv(name); ok {
+			inherited[name] = value
+		}
+	}
+
+	if len(prefixes) > 0 {
+		for _, entry := range os.Environ() {
+			key, value, found := strings.Cut(entry, "=")
+			if !found {
+				continue
+			}
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(key, prefix) {
+					inherited[key] = value
+					break
+				}
+			}
+		}
+	}
+
+	if len(inherited) == 0 {
+		return nil
+	}
+	return inherited
 }

@@ -64,6 +64,8 @@ type BotConfig struct {
 	Name          string            `yaml:"name"`
 	Type          string            `yaml:"type"`
 	DisplayName   string            `yaml:"display_name"`
+	About         string            `yaml:"about"`   // profile bio, where the platform has one (nostr kind:0)
+	Picture       string            `yaml:"picture"` // profile avatar URL, where the platform has one (nostr kind:0)
 	Username      string            `yaml:"username"`
 	JID           string            `yaml:"jid"`
 	BotToken      string            `yaml:"bot_token"`
@@ -106,10 +108,12 @@ type AgentConfig struct {
 	Command      agent.Command     `yaml:"command"`      // command and acp drivers; exec'd directly, never via shell
 	Workdir      string            `yaml:"workdir"`      // working directory (optional)
 	Instructions string            `yaml:"instructions"` // persistent-agent developer instructions
-	Env          map[string]string `yaml:"env"`          // appended to the agent process environment; $ENV_VAR values are resolved
+	Env          map[string]string `yaml:"env"`          // the agent process environment; $ENV_VAR values are resolved
+	EnvInherit   []string          `yaml:"env_inherit"`  // daemon variables copied into the agent process; nothing is inherited otherwise
 	Buffer       int               `yaml:"buffer"`       // command driver: batch window in seconds (default 30)
 	Timeout      int               `yaml:"timeout"`      // max command/turn runtime in seconds
 	Cooldown     int               `yaml:"cooldown"`     // command driver: min seconds between runs (default 60)
+	Isolation    agent.Isolation   `yaml:"isolation"`    // where the harness runs; `container` or a block. Default: same host as the daemon
 	Codex        CodexAgentConfig  `yaml:"codex"`        // codex driver overrides; omitted values inherit local Codex config
 	Claude       ClaudeAgentConfig `yaml:"claude"`       // claude driver overrides; omitted values inherit local Claude Code config
 	ACP          ACPAgentConfig    `yaml:"acp"`          // acp driver overrides for the agent named by command
@@ -144,6 +148,29 @@ type ClaudeAgentConfig struct {
 type ACPAgentConfig struct {
 	Model    string `yaml:"model"`    // optional; otherwise the agent's local default
 	Approval string `yaml:"approval"` // tool permission requests: reject (default), approve, or approve-for-session
+}
+
+// effectiveHarness is the command an agent runs once an explicit command has
+// overridden the driver's own binary. It mirrors what the server resolves at
+// start, so validation reports the same invocation that will actually run.
+func effectiveHarness(a AgentConfig, driver string) agent.Command {
+	if len(a.Command) > 0 {
+		return agent.Command(a.Command)
+	}
+	switch driver {
+	case "codex":
+		if binary := strings.TrimSpace(a.Codex.Binary); binary != "" {
+			return agent.Command{binary}
+		}
+		return agent.Command{"codex"}
+	case "claude":
+		if binary := strings.TrimSpace(a.Claude.Binary); binary != "" {
+			return agent.Command{binary}
+		}
+		return agent.Command{"claude"}
+	default:
+		return nil
+	}
 }
 
 func ResolveCredential(value string) (string, error) {
@@ -403,9 +430,31 @@ func validate(cfg Config, allowExec bool) error {
 			}
 		}
 
+		if err := a.Isolation.Validate(); err != nil {
+			return fmt.Errorf("agent %q: %w", a.Name, err)
+		}
+
 		driver := strings.TrimSpace(a.Driver)
 		if driver == "" && len(a.Command) > 0 {
 			driver = "command"
+		}
+
+		// An explicit command is executed directly whatever the driver, so the
+		// allowlist applies to it exactly as it does for the command and acp
+		// drivers.
+		if len(a.Command) > 0 && (driver == "codex" || driver == "claude") {
+			binary := filepath.Base(a.Command[0])
+			if !allowExec && !agent.AllowedCommands[binary] {
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (%s); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0], strings.Join(agent.AllowedCommandNames(), ", "))
+			}
+		}
+
+		// Resolve the container invocation now so an unknown image is reported
+		// while loading the config rather than when the agent first starts.
+		if a.Isolation.Enabled() {
+			if _, err := a.Isolation.Wrap(a.Name, effectiveHarness(a, driver), a.Env); err != nil {
+				return err
+			}
 		}
 
 		switch driver {
@@ -418,11 +467,11 @@ func validate(cfg Config, allowExec bool) error {
 			// --allow-exec. Commands are executed directly, never by a shell.
 			binary := filepath.Base(a.Command[0])
 			if !allowExec && !agent.AllowedCommands[binary] {
-				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini, kimi); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (%s); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0], strings.Join(agent.AllowedCommandNames(), ", "))
 			}
 		case "codex":
-			if len(a.Command) > 0 {
-				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
+			if len(a.Command) > 0 && strings.TrimSpace(a.Codex.Binary) != "" {
+				return fmt.Errorf("agent %q: set either command or codex.binary, not both", a.Name)
 			}
 			switch a.Codex.Sandbox {
 			case "", "read-only", "workspace-write", "danger-full-access":
@@ -435,8 +484,8 @@ func validate(cfg Config, allowExec bool) error {
 				return fmt.Errorf("agent %q: unsupported codex approval_policy %q", a.Name, a.Codex.ApprovalPolicy)
 			}
 		case "claude":
-			if len(a.Command) > 0 {
-				return fmt.Errorf("agent %q: command cannot be used with driver %q", a.Name, driver)
+			if len(a.Command) > 0 && strings.TrimSpace(a.Claude.Binary) != "" {
+				return fmt.Errorf("agent %q: set either command or claude.binary, not both", a.Name)
 			}
 			switch a.Claude.PermissionMode {
 			case "", "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan":
@@ -452,7 +501,7 @@ func validate(cfg Config, allowExec bool) error {
 			// command-driver allowlist applies unless --allow-exec.
 			binary := filepath.Base(a.Command[0])
 			if !allowExec && !agent.AllowedCommands[binary] {
-				return fmt.Errorf("agent %q: command %q is not in the allowed list (claude, codex, copilot, aider, goose, opencode, gemini, kimi); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0])
+				return fmt.Errorf("agent %q: command %q is not in the allowed list (%s); start pantalkd with --allow-exec to permit arbitrary commands", a.Name, a.Command[0], strings.Join(agent.AllowedCommandNames(), ", "))
 			}
 			switch a.ACP.Approval {
 			case "", "reject", "approve", "approve-for-session":

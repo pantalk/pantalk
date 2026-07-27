@@ -15,7 +15,7 @@ follows.
 | [1. All-in-one](#1-all-in-one)                     | Inside the daemon   | None between agent and daemon   | Single operator, trusted host, fastest start      |
 | [2. Socket export](#2-socket-export)               | Separate container/VM | Filesystem, process, network   | Multiple agents, untrusted agent code, multi-repo |
 | [3. Sidecar](#3-sidecar)                           | Peer container in a pod | Same as 2, lifecycle-coupled | Kubernetes, one agent per workload                |
-| [4. Pantalk Station](#4-pantalk-station)           | Inside a desktop image | Whole-desktop boundary       | Demos, shared team harness, human-in-the-loop     |
+| [4. Pantalk Ghost](#4-pantalk-ghost)                  | Inside a desktop image | Whole-desktop boundary       | Demos, shared team harness, human-in-the-loop     |
 | [5. Everything else](#5-everything-else)           | Varies              | Varies                          | macOS, SSH-forwarded, multi-tenant, k8s at scale  |
 
 ---
@@ -64,7 +64,7 @@ That last point is the whole of Topology 1's caveat, so it gets its own section.
 ## 1. All-in-one
 
 The daemon and the harness share a host, a user, and a process tree. This is
-what `pantalkd &`, `pantalk local`, the official Docker image, and Station all
+what `pantalkd &`, `pantalk local`, the official Docker image, and Ghost all
 do by default.
 
 ```mermaid
@@ -105,7 +105,7 @@ docker run --detach \
 ```
 
 (The official image ships `pantalk` and `pantalkd` only. A harness has to be
-layered on top, or you use Station.)
+layered on top, or you use Ghost.)
 
 ### The caveat: the agent *is* the daemon
 
@@ -502,9 +502,9 @@ Four Kubernetes-specific notes:
 
 ---
 
-## 4. Pantalk Station
+## 4. Pantalk Ghost
 
-[Pantalk Station](https://github.com/pantalk/station) inverts the whole
+[Pantalk Ghost](https://github.com/pantalk/ghost) inverts the whole
 question: instead of shipping a harness *to* the daemon, it ships a **desktop
 that already contains both**. `pantalkd`, Codex, and Claude Code are installed
 and registered as agents; KasmVNC serves the desktop over HTTP so you reach it
@@ -512,10 +512,10 @@ from a browser.
 
 ```bash
 docker run --detach \
-  --name pantalk-station \
+  --name pantalk-ghost \
   --shm-size 1g \
   --publish 127.0.0.1:6902:6901 \
-  ghcr.io/pantalk/station:latest
+  ghcr.io/pantalk/ghost:latest
 ```
 
 Architecturally this is **Topology 1 with a UI on it** - the agents and the
@@ -525,18 +525,18 @@ itself.
 
 ### Ready-made deployment recipes
 
-Station's repository carries complete Compose deployments that stand up Station
+Ghost's repository carries complete Compose deployments that stand up Ghost
 *and* a messaging server together. They are the fastest end-to-end path, and the
 best worked examples to copy from:
 
-| Recipe                            | Brings up                                       |
-| --------------------------------- | ------------------------------------------------ |
-| `deployments/mattermost`          | Mattermost Team Edition + PostgreSQL + Station   |
-| `deployments/ergo`                | Ergo IRC server + The Lounge web client + Station |
+| Recipe                   | Brings up                                        |
+| ------------------------ | ------------------------------------------------ |
+| `deployments/mattermost` | Mattermost Team Edition + PostgreSQL + Ghost      |
+| `deployments/ergo`       | Ergo IRC server + The Lounge web client + Ghost   |
 
 ```bash
 cd deployments/mattermost
-make up          # generates .env, starts Mattermost, provisions bots, starts Station
+make up          # generates .env, starts Mattermost, provisions bots, starts Ghost
 make credentials # print the generated admin login
 make smoke       # live end-to-end messaging test
 make down        # stop, preserving all volumes
@@ -545,7 +545,7 @@ make down        # stop, preserving all volumes
 `make up` provisions a `pantalk` team, an `agents` channel, and `codex` and
 `claude` bot accounts; writes their tokens into the gitignored `.state/`
 directory; renders `config/pantalk.yaml.tmpl` into a real Pantalk config; and
-mounts it over Station's transport-neutral starter. Then you open
+mounts it over Ghost's transport-neutral starter. Then you open
 <http://127.0.0.1:6902>, use the desktop's **Setup** menu to log into Codex or
 Claude Code once, and DM `@codex` or `@claude` in Mattermost.
 
@@ -565,14 +565,14 @@ bots:
 `direct || mentions` rather than `when: true` is what stops two agents in the
 same channel answering each other in a loop. Copy that.
 
-The deployments also demonstrate the claim Station exists to make: the Station
+The deployments also demonstrate the claim Ghost exists to make: the Ghost
 image is byte-identical between the Mattermost and Ergo recipes. Only the
 mounted Pantalk config differs, and the agent definitions carry across
 untouched.
 
-### Station's declared security posture
+### Ghost's declared security posture
 
-Station documents itself as a **single-tenant, trusted-host environment**, and
+Ghost documents itself as a **single-tenant, trusted-host environment**, and
 means it:
 
 - KasmVNC has **no browser password**.
@@ -584,14 +584,14 @@ So: **do not publish port 6901, and do not change `BIND_ADDRESS`, on an
 untrusted host.** The default binding is `127.0.0.1` deliberately.
 
 What the team shares is the *harness through chat*, not the desktop. That
-distinction is the deployment model: run Station somewhere you control, put it
+distinction is the deployment model: run Ghost somewhere you control, put it
 behind an authenticating reverse proxy or a VPN/tunnel if it must be remote, and
 let Pantalk be the front door. Sessions are keyed by service, bot, channel,
 thread, and user, so each teammate reaching it through chat still gets an
 isolated conversation - **one harness subscription, no per-person seat, no
 per-person terminal.**
 
-### When Station is the right production answer
+### When Ghost is the right production answer
 
 It genuinely is, for: a shared team assistant on an internal host;
 human-in-the-loop work where someone occasionally wants to watch or take over at
@@ -741,7 +741,7 @@ online backup rather than copying the file under load.
   invalidated (see the bind-mount gotcha in [§2](#five-things-that-will-bite-you)).
 - **Config is strictly validated**: unknown keys are a hard load failure. Run
   `pantalk validate` in CI against your rendered config before shipping it.
-- **Version the daemon and the image together.** Station pins its Pantalk
+- **Version the daemon and the image together.** Ghost pins its Pantalk
   release via a build argument for exactly this reason.
 
 ### Observability
@@ -786,4 +786,4 @@ its model endpoint.
 - [`agents.md`](agents.md) - drivers, `when:` bindings, scheduled prompts
 - [`claude-agent.md`](claude-agent.md) / [`codex-agent.md`](codex-agent.md) - harness-side permission and sandbox settings
 - [`local-connector.md`](local-connector.md) - credential-free connector for testing a deployment
-- [Pantalk Station](https://github.com/pantalk/station) - the desktop image and its deployment recipes
+- [Pantalk Ghost](https://github.com/pantalk/ghost) - the desktop image and its deployment recipes

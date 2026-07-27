@@ -13,17 +13,28 @@ import (
 	"testing"
 )
 
+// helperConfig marks the re-executed test binary as the fake claude CLI. The
+// child inherits nothing from this process, so the marker has to travel
+// through the configured environment like any other variable.
+func helperConfig(cfg Config) Config {
+	env := make(map[string]string, len(cfg.Env)+1)
+	for key, value := range cfg.Env {
+		env[key] = value
+	}
+	env["GO_WANT_CLAUDE_HELPER_PROCESS"] = "1"
+	cfg.Env = env
+	return cfg
+}
+
 func TestClientStartsAndResumesSession(t *testing.T) {
 	var calls [][]string
 	factory := func(ctx context.Context, _ string, args []string) (*exec.Cmd, error) {
 		calls = append(calls, append([]string(nil), args...))
 		helperArgs := append([]string{"-test.run=TestClaudeHelperProcess", "--"}, args...)
-		cmd := exec.CommandContext(ctx, os.Args[0], helperArgs...)
-		cmd.Env = append(os.Environ(), "GO_WANT_CLAUDE_HELPER_PROCESS=1")
-		return cmd, nil
+		return exec.CommandContext(ctx, os.Args[0], helperArgs...), nil
 	}
 
-	client := newClient(Config{
+	client := newClient(helperConfig(Config{
 		Binary:          "/opt/claude",
 		Workdir:         t.TempDir(),
 		Model:           "sonnet",
@@ -32,7 +43,7 @@ func TestClientStartsAndResumesSession(t *testing.T) {
 		Instructions:    "Be concise.",
 		AllowedTools:    []string{"Read", " Grep "},
 		DisallowedTools: []string{"Edit", "Write"},
-	}, factory)
+	}), factory)
 
 	first, err := client.RunTurn(context.Background(), "", "first prompt")
 	if err != nil {
@@ -87,11 +98,9 @@ func TestClientStartsAndResumesSession(t *testing.T) {
 func TestClientReportsUnsuccessfulResult(t *testing.T) {
 	factory := func(ctx context.Context, _ string, args []string) (*exec.Cmd, error) {
 		helperArgs := append([]string{"-test.run=TestClaudeHelperProcess", "--"}, args...)
-		cmd := exec.CommandContext(ctx, os.Args[0], helperArgs...)
-		cmd.Env = append(os.Environ(), "GO_WANT_CLAUDE_HELPER_PROCESS=1")
-		return cmd, nil
+		return exec.CommandContext(ctx, os.Args[0], helperArgs...), nil
 	}
-	client := newClient(Config{}, factory)
+	client := newClient(helperConfig(Config{}), factory)
 
 	_, err := client.RunTurn(context.Background(), "", "return-error")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
@@ -102,16 +111,14 @@ func TestClientReportsUnsuccessfulResult(t *testing.T) {
 func TestClientInjectsConfiguredEnvironment(t *testing.T) {
 	factory := func(ctx context.Context, _ string, args []string) (*exec.Cmd, error) {
 		helperArgs := append([]string{"-test.run=TestClaudeHelperProcess", "--"}, args...)
-		cmd := exec.CommandContext(ctx, os.Args[0], helperArgs...)
-		cmd.Env = append(os.Environ(), "GO_WANT_CLAUDE_HELPER_PROCESS=1")
-		return cmd, nil
+		return exec.CommandContext(ctx, os.Args[0], helperArgs...), nil
 	}
-	client := newClient(Config{
+	client := newClient(helperConfig(Config{
 		Env: map[string]string{
 			"ANTHROPIC_BASE_URL":   "https://api.example.com/anthropic",
 			"ANTHROPIC_AUTH_TOKEN": "secret-token",
 		},
-	}, factory)
+	}), factory)
 
 	result, err := client.RunTurn(context.Background(), "", "env-check")
 	if err != nil {

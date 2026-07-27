@@ -44,10 +44,25 @@ bots:
 | `private_key` | Bot signing key; supports `$ENV_VAR` syntax | Yes |
 | `relays` | `ws://` or `wss://` relay URLs used for subscriptions and publishing | Yes |
 | `channels` | NIP-28 channel event IDs and relay-scoped NIP-29 group IDs | No |
+| `display_name` | Profile name published as kind-0 metadata; defaults to the bot `name` | No |
+| `about` | Profile bio published as kind-0 metadata | No |
+| `picture` | Profile avatar URL published as kind-0 metadata | No |
 
 NIP-29 group IDs are meaningful only together with their relay. Pantalk
 therefore requires the form `nip29:<relay-url>'<group-id>` and rejects an
 unscoped group ID.
+
+## Profile, presence, and typing
+
+On every connect Pantalk publishes a kind-0 profile so the bot appears as a
+named participant rather than a bare public key, then publishes an ephemeral
+kind-20001 presence event and refreshes it on the connector's heartbeat.
+Typing indicators are published as kind-20002 for NIP-29 destinations; NIP-28
+channels and DMs have no equivalent and are silently skipped.
+
+Presence and typing sit outside the kind range every relay implements. A relay
+that rejects them logs a line and the session continues — the bot simply looks
+permanently idle rather than failing to run.
 
 ## Direct messages (NIP-17)
 
@@ -55,6 +70,10 @@ Pantalk listens for NIP-17 gift wraps on the configured relays and publishes a
 signed kind-10050 DM relay list when it connects, allowing other NIP-17 clients
 to discover the bot's inboxes. A recipient must likewise publish a kind-10050
 relay list before Pantalk can send them a DM.
+
+Relays that accept only a fixed set of kinds reject the relay list. Pantalk
+logs that and keeps the session, so channel and group subscriptions still work
+— only NIP-17 inbox discovery is lost.
 
 DM targets accept hexadecimal public keys, `npub`, or `nprofile` values:
 
