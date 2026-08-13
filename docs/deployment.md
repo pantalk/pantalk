@@ -514,7 +514,8 @@ from a browser.
 docker run --detach \
   --name pantalk-ghost \
   --shm-size 1g \
-  --publish 127.0.0.1:6902:6901 \
+  --publish 127.0.0.1:6901:6901 \
+  --publish 127.0.0.1:6902:6902 \
   ghcr.io/pantalk/ghost:latest
 ```
 
@@ -546,7 +547,7 @@ make down        # stop, preserving all volumes
 `claude` bot accounts; writes their tokens into the gitignored `.state/`
 directory; renders `config/pantalk.yaml.tmpl` into a real Pantalk config; and
 mounts it over Ghost's transport-neutral starter. Then you open
-<http://127.0.0.1:6902>, use the desktop's **Setup** menu to log into Codex or
+<http://127.0.0.1:6901>, use the desktop's **Setup** menu to log into Codex or
 Claude Code once, and DM `@codex` or `@claude` in Mattermost.
 
 The pattern worth stealing regardless of which chat system you run:
@@ -580,8 +581,8 @@ means it:
 - Claude runs `permission_mode: acceptEdits`.
 - The desktop user has passwordless `sudo`.
 
-So: **do not publish port 6901, and do not change `BIND_ADDRESS`, on an
-untrusted host.** The default binding is `127.0.0.1` deliberately.
+So: **do not publish ports 6901 or 6902, and do not change `BIND_ADDRESS`, on
+an untrusted host.** The default binding is `127.0.0.1` deliberately.
 
 What the team shares is the *harness through chat*, not the desktop. That
 distinction is the deployment model: run Ghost somewhere you control, put it
