@@ -274,11 +274,12 @@ agent is live in a real chat server minutes later.
 docker run --detach \
   --name pantalk-ghost \
   --shm-size 1g \
-  --publish 127.0.0.1:6902:6901 \
+  --publish 127.0.0.1:6901:6901 \
+  --publish 127.0.0.1:6902:6902 \
   ghcr.io/pantalk/ghost:latest
 ```
 
-Open <http://127.0.0.1:6902>. Ghost ships transport-neutral on purpose: the
+Open <http://127.0.0.1:6901>. Ghost ships transport-neutral on purpose: the
 messaging system is a deployment recipe, not part of the image. Bring up
 Mattermost or an Ergo IRC server alongside it with one command, and swap which
 harness answers by editing one line of Pantalk config.
